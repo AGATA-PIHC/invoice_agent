@@ -1,0 +1,8 @@
+google-adk
+google-genai
+PyMuPDF
+python-pptx
+openai-whisper
+ffmpeg-python
+tiktoken
+python-dotenv
