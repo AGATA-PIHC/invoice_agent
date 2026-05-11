@@ -48,6 +48,64 @@ def extract_pdf_content(file_path: str) -> dict[str, Any]:
         return {"success": False, "error": str(exc), "file_path": file_path}
 
 
+def extract_pdf_content_and_metadata(file_path: str) -> dict[str, Any]:
+    """
+    Ekstrak teks dan metadata PDF dengan satu kali open file.
+
+    Returns:
+        dict: success, file_path, total_pages, full_text, pages, metadata, error.
+    """
+    if not os.path.exists(file_path):
+        return {"success": False, "error": f"File tidak ditemukan: {file_path}"}
+    try:
+        doc = fitz.open(file_path)
+        try:
+            raw_meta = doc.metadata
+            pages = [{"page": i + 1, "text": doc[i].get_text()} for i in range(len(doc))]
+        finally:
+            doc.close()
+
+        full_text = "\n\n".join(f"=== HALAMAN {p['page']} ===\n{p['text']}" for p in pages)
+        creation_date = _parse_pdf_date(raw_meta.get("creationDate"))
+        mod_date = _parse_pdf_date(raw_meta.get("modDate"))
+
+        was_modified = False
+        modification_gap_days: int | None = None
+        if creation_date and mod_date and creation_date != mod_date:
+            try:
+                gap_seconds = (
+                    datetime.fromisoformat(mod_date) - datetime.fromisoformat(creation_date)
+                ).total_seconds()
+                if gap_seconds > 300:
+                    was_modified = True
+                    modification_gap_days = int(gap_seconds // 86400)
+            except Exception:
+                was_modified = False
+                modification_gap_days = None
+
+        metadata = {
+            "success": True,
+            "title": raw_meta.get("title", ""),
+            "author": raw_meta.get("author", ""),
+            "creator": raw_meta.get("creator", ""),
+            "producer": raw_meta.get("producer", ""),
+            "creation_date": creation_date,
+            "modification_date": mod_date,
+            "was_modified": was_modified,
+            "modification_gap_days": modification_gap_days,
+        }
+        return {
+            "success": True,
+            "file_path": file_path,
+            "total_pages": len(pages),
+            "full_text": full_text,
+            "pages": pages,
+            "metadata": metadata,
+        }
+    except Exception as exc:
+        return {"success": False, "error": str(exc), "file_path": file_path}
+
+
 def extract_pdf_metadata(file_path: str) -> dict[str, Any]:
     """
     Ekstrak metadata internal PDF (creator, producer, tanggal, dll).
@@ -79,7 +137,8 @@ def extract_pdf_metadata(file_path: str) -> dict[str, Any]:
                     was_modified = True
                     modification_gap_days = int(gap_seconds // 86400)
             except Exception:
-                pass
+                was_modified = False
+                modification_gap_days = None
 
         return {
             "success": True,

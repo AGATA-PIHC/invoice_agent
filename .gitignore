@@ -48,3 +48,16 @@ desktop.ini
 
 # Logs
 *.log
+
+# Upload temp directory (runtime, tidak perlu di-commit)
+tmp_uploads/
+
+# Code review artifacts
+.full-review/
+
+# Pytest cache
+.pytest_cache/
+
+# Coverage
+.coverage
+htmlcov/

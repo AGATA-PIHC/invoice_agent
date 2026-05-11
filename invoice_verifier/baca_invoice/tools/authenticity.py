@@ -5,23 +5,8 @@ from .constants import CONFIDENCE_DEDUCTIONS, KNOWN_PROVIDERS, SOFTWARE_LABELS
 from .pdf import extract_pdf_content, extract_pdf_metadata, normalize_metadata
 
 
-def analyze_document_authenticity(file_path: str) -> dict[str, Any]:
-    """
-    Analisis keaslian dokumen berdasarkan metadata PDF.
-
-    Dokumen AUTENTIK: creator/producer dari sistem web provider resmi.
-    Dokumen PALSU/DIEDIT: terdeteksi software pengeditan di metadata.
-    Dokumen MENCURIGAKAN: dimodifikasi setelah dibuat, atau provider tidak dikenal.
-
-    Args:
-        file_path: Path ke file PDF.
-
-    Returns:
-        dict: verdict, is_suspicious, confidence_score, fake_evidence, warning_flags, dll.
-    """
-    meta = extract_pdf_metadata(file_path)
-    content = extract_pdf_content(file_path)
-
+def _do_analyze(meta: dict, full_text: str) -> dict[str, Any]:
+    """Core authenticity analysis given pre-read metadata and text (no file I/O)."""
     if not meta.get("success"):
         return {
             "verdict": "MENCURIGAKAN",
@@ -38,7 +23,7 @@ def analyze_document_authenticity(file_path: str) -> dict[str, Any]:
 
     creator = normalize_metadata(meta.get("creator") or "")
     producer = normalize_metadata(meta.get("producer") or "")
-    full_text = (content.get("full_text") or "").lower() if content.get("success") else ""
+    text_lower = full_text.lower()
 
     warning_flags: list[str] = []
     fake_evidence: list[str] = []
@@ -61,7 +46,7 @@ def analyze_document_authenticity(file_path: str) -> dict[str, Any]:
     # 2. Identifikasi provider dari konten
     detected_provider: str | None = None
     for name, cfg in KNOWN_PROVIDERS.items():
-        if any(kw in full_text for kw in cfg["keywords"]):
+        if any(kw in text_lower for kw in cfg["keywords"]):
             detected_provider = name
             break
 
@@ -83,7 +68,7 @@ def analyze_document_authenticity(file_path: str) -> dict[str, Any]:
                 f" Konten mengklaim dari '{detected_provider}', "
                 f"namun metadata menunjukkan diproses ulang dengan {detected_sw_label}."
             )
-    elif full_text:
+    elif text_lower:
         warning_flags.append("unknown_provider")
         fake_evidence.append(
             f"[BUKTI - PROVIDER TIDAK DIKENAL] "
@@ -114,7 +99,6 @@ def analyze_document_authenticity(file_path: str) -> dict[str, Any]:
             "Metadata yang hilang mengindikasikan jejak pengeditan sengaja dihapus."
         )
 
-    # Hitung confidence & verdict
     confidence = round(
         max(0.0, 1.0 - sum(CONFIDENCE_DEDUCTIONS.get(f, 0.0) for f in warning_flags)), 2
     )
@@ -144,3 +128,23 @@ def analyze_document_authenticity(file_path: str) -> dict[str, Any]:
         "fake_evidence": fake_evidence,
         "analysis_notes": analysis_notes,
     }
+
+
+def analyze_document_authenticity(file_path: str) -> dict[str, Any]:
+    """
+    Analisis keaslian dokumen berdasarkan metadata PDF.
+
+    Dokumen AUTENTIK: creator/producer dari sistem web provider resmi.
+    Dokumen PALSU/DIEDIT: terdeteksi software pengeditan di metadata.
+    Dokumen MENCURIGAKAN: dimodifikasi setelah dibuat, atau provider tidak dikenal.
+
+    Args:
+        file_path: Path ke file PDF.
+
+    Returns:
+        dict: verdict, is_suspicious, confidence_score, fake_evidence, warning_flags, dll.
+    """
+    meta = extract_pdf_metadata(file_path)
+    content = extract_pdf_content(file_path)
+    full_text = content.get("full_text", "") if content.get("success") else ""
+    return _do_analyze(meta, full_text)
