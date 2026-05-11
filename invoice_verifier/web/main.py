@@ -26,7 +26,10 @@ _LOG_CONFIG: dict = {
     "formatters": {
         "json": {
             "()": "logging.Formatter",
-            "fmt": '{"time":"%(asctime)s","level":"%(levelname)s","logger":"%(name)s","msg":"%(message)s"}',
+            "fmt": (
+                '{"time":"%(asctime)s","level":"%(levelname)s",'
+                '"logger":"%(name)s","msg":"%(message)s"}'
+            ),
         }
     },
     "handlers": {"console": {"class": "logging.StreamHandler", "formatter": "json"}},

@@ -7,18 +7,17 @@ import os
 import re
 import shutil
 import time
-import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
+from baca_invoice.agents.flight import flight_agent
+from baca_invoice.agents.hotel import hotel_agent
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types as genai_types
 
-from baca_invoice.agents.flight import flight_agent
-from baca_invoice.agents.hotel import hotel_agent
 from web.config import APP_NAME, IS_PRODUCTION, JOB_TTL_SECONDS, MAX_CONCURRENT_JOBS, UPLOAD_DIR
 
 logger = logging.getLogger(__name__)
@@ -56,7 +55,7 @@ class Job:
         notify = self._notify
         try:
             await asyncio.wait_for(asyncio.shield(notify.wait()), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
         return cursor
 
@@ -166,7 +165,10 @@ class AgentRunnerService:
                     parts=[genai_types.Part(text=f"file_path: {job.file_path}")],
                 )
 
-                job.push({"type": "status", "message": f"Terdeteksi: {label}. Memulai verifikasi..."})
+                job.push({
+                    "type": "status",
+                    "message": f"Terdeteksi: {label}. Memulai verifikasi...",
+                })
 
                 async for event in runner.run_async(
                     user_id=user_id,
@@ -229,7 +231,7 @@ class AgentRunnerService:
             notify = job._notify
             try:
                 await asyncio.wait_for(asyncio.shield(notify.wait()), timeout=15.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 yield ": keepalive\n\n"
                 # Refresh notify reference in case push() replaced it while we waited
                 if cursor < len(job.events):

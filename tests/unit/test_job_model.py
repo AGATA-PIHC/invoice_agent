@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
 from web.services.agent_runner import Job, JobStatus
 
 
 def make_job() -> Job:
-    return Job(job_id="test-id", filename="test.pdf", file_path="/tmp/test.pdf")
+    return Job(job_id="test-id", filename="test.pdf", file_path="/tmp/test.pdf")  # noqa: S108
 
 
 def test_job_initial_state():

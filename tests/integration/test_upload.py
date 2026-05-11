@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 from web.config import MAX_UPLOAD_MB, UPLOAD_DIR
 
 
@@ -65,7 +63,6 @@ async def test_result_endpoint_with_valid_token(client, uploaded_job):
 
 
 async def test_unknown_job_returns_404(client, uploaded_job):
-    token = uploaded_job["token"]
     fake_id = "00000000-0000-0000-0000-000000000000"
     # Token for fake_id would be different; we need a valid token for this fake_id
     from web.dependencies import make_job_token
