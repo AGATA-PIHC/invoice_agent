@@ -1,32 +1,45 @@
-# Invoice Agent
+# Invoice Verifier
 
-Agent berbasis [Google ADK](https://google.github.io/adk-docs/) untuk verifikasi keaslian dokumen perjalanan dinas — tiket pesawat dan invoice hotel dalam format PDF.
+Aplikasi web untuk verifikasi keaslian dokumen perjalanan dinas — tiket pesawat dan invoice hotel dalam format PDF. Dibangun dengan [Google Agent Development Kit (ADK)](https://google.github.io/adk-docs/) dan FastAPI.
 
 ## Fitur
 
-- Ekstraksi data terstruktur dari PDF tiket pesawat (Traveloka, AirAsia, Garuda, Lion Air, dll.)
-- Ekstraksi data terstruktur dari PDF invoice hotel (Tiket.com, Booking.com, dll.)
-- Deteksi keaslian dokumen: metadata PDF, software pengedit, modifikasi pasca-pembuatan
-- Output JSON terstruktur dengan confidence score dan verdict (AUTENTIK / MENCURIGAKAN / PALSU)
+- Upload PDF via drag & drop atau file picker langsung dari browser
+- Deteksi otomatis jenis dokumen (tiket pesawat / invoice hotel) tanpa LLM
+- Ekstraksi data terstruktur: rute, tanggal, harga, vendor, penumpang/tamu
+- Analisis keaslian: metadata PDF, software pengedit, tanda modifikasi pasca-cetak
+- Verdict per dokumen: **AUTENTIK**, **MENCURIGAKAN**, atau **PALSU** dengan confidence score
+- Streaming real-time aktivitas agent via Server-Sent Events (SSE)
+- Rate limiting dan HMAC token untuk keamanan upload
 
 ## Struktur Project
 
 ```
 adk_workspace/
-├── baca_invoice/
-│   ├── agent.py          # Root agent (koordinator)
-│   ├── agents/
-│   │   ├── flight.py     # Sub-agent tiket pesawat
-│   │   ├── hotel.py      # Sub-agent invoice hotel
-│   │   └── prompts.py    # Prompt semua agent
-│   ├── models/
-│   │   ├── flight.py     # Pydantic model output tiket pesawat
-│   │   ├── hotel.py      # Pydantic model output invoice hotel
-│   │   └── authenticity.py
-│   └── tools/
-│       ├── pdf.py        # Tool ekstraksi konten PDF
-│       ├── authenticity.py # Tool analisis keaslian PDF
-│       └── constants.py  # Daftar provider & software edit
+├── invoice_verifier/
+│   ├── baca_invoice/           # Core agent package (Google ADK)
+│   │   ├── agent.py            # Entry point ADK CLI
+│   │   ├── agents/
+│   │   │   ├── flight.py       # LlmAgent tiket pesawat
+│   │   │   ├── hotel.py        # LlmAgent invoice hotel
+│   │   │   └── prompts.py      # System prompt semua agent
+│   │   ├── models/             # Pydantic output models
+│   │   └── tools/
+│   │       ├── combined.py     # Tool utama: baca PDF + analisis sekaligus
+│   │       ├── pdf.py          # Ekstraksi konten & metadata PDF
+│   │       ├── authenticity.py # Analisis keaslian dokumen
+│   │       └── constants.py    # Daftar provider & software pengedit
+│   └── web/                    # FastAPI web server
+│       ├── main.py             # App entrypoint & lifespan
+│       ├── config.py           # Konfigurasi dari env vars
+│       ├── api/verify.py       # Endpoint upload & SSE stream
+│       ├── services/
+│       │   └── agent_runner.py # Manajemen job & routing ke agent
+│       └── static/             # Frontend (HTML + CSS + JS)
+├── tests/                      # Unit, integration & security tests
+├── run_web.py                  # Jalankan web server
+├── Dockerfile
+├── pyproject.toml
 └── requirements.txt
 ```
 
@@ -52,7 +65,7 @@ python -m venv .venv
 # Windows
 .venv\Scripts\activate
 
-# macOS/Linux
+# macOS / Linux
 source .venv/bin/activate
 ```
 
@@ -65,56 +78,81 @@ pip install -r requirements.txt
 **4. Konfigurasi environment**
 
 ```bash
-cp baca_invoice/.env_example .env
+cp .env.example .env
 ```
 
-Edit `.env` dan isi dengan API key:
+Edit `.env` dan isi `GOOGLE_API_KEY`:
 
 ```env
-GOOGLE_GENAI_USE_VERTEXAI=0
-GOOGLE_API_KEY=your_google_api_key_here
+GOOGLE_API_KEY=your-google-api-key-here
+APP_ENV=development
 ```
 
-## Cara Menjalankan
-
-Jalankan ADK web UI dari root project:
+## Menjalankan Web App
 
 ```bash
-adk web
+python run_web.py
 ```
 
-Buka browser di `http://localhost:8000`, pilih agent **`baca_invoice`**, lalu kirim perintah seperti:
+Buka browser di `http://localhost:8080`, upload file PDF, dan tunggu hasil verifikasi.
 
-```
-Verifikasi file ini: C:/path/to/invoice.pdf
-```
+Atau dengan auto-reload saat development:
 
-Agent akan otomatis mendeteksi jenis dokumen (pesawat atau hotel) dan mengembalikan hasil verifikasi dalam format JSON.
-
-### Contoh Output
-
-```json
-{
-  "summary": "Garuda Indonesia CGK-DPS tgl 2024-03-15. Total: Rp 1.250.000. Verdict: AUTENTIK.",
-  "authenticity": {
-    "verdict": "AUTENTIK",
-    "is_suspicious": false,
-    "confidence_score": 0.95,
-    "fake_evidence": []
-  },
-  "total_payment": 1250000.0,
-  "requires_manual_review": false
-}
+```bash
+python run_web.py --reload
 ```
 
-## Menjalankan via CLI
+## Menjalankan via Docker
+
+```bash
+docker build -t invoice-verifier .
+docker run -p 8080:8080 --env-file .env invoice-verifier
+```
+
+## Menjalankan via ADK CLI
 
 ```bash
 adk run baca_invoice
 ```
 
-Kemudian ketik instruksi di terminal, misalnya:
+Kemudian kirim path file di terminal:
 
 ```
-path: C:/dokumen/invoice_hotel.pdf
+file_path: /path/to/dokumen.pdf
 ```
+
+## Menjalankan Tests
+
+```bash
+pytest tests/ -v
+```
+
+## Contoh Output
+
+```json
+{
+  "verdict": "AUTENTIK",
+  "is_suspicious": false,
+  "confidence_score": 0.95,
+  "detected_provider": "Garuda Indonesia",
+  "warning_flags": [],
+  "summary": "Garuda Indonesia CGK-DPS, 15 Mar 2024. Total: Rp 1.250.000.",
+  "passenger_name": "Budi Santoso",
+  "departure": "Jakarta (CGK)",
+  "destination": "Denpasar (DPS)",
+  "departure_date": "2024-03-15",
+  "total_payment": 1250000.0,
+  "requires_manual_review": false
+}
+```
+
+## Tech Stack
+
+| Komponen | Teknologi |
+|---|---|
+| Agent framework | Google ADK + Gemini 2.5 Flash |
+| Web server | FastAPI + Uvicorn |
+| PDF processing | PyMuPDF (fitz) |
+| Streaming | Server-Sent Events (SSE) |
+| Frontend | Vanilla JS, CSS glassmorphism |
+| Testing | pytest + pytest-asyncio + httpx |
