@@ -1,0 +1,41 @@
+from __future__ import annotations
+
+import uuid
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+
+@pytest.fixture(autouse=True)
+def isolate_rate_limit():
+    """Give each test a unique rate-limit key so tests don't share counters."""
+    import web.rate_limit as rl
+    rl._test_key_override = str(uuid.uuid4())
+    yield
+    rl._test_key_override = None
+
+
+@pytest.fixture
+async def client():
+    """Async test client that starts the full app lifespan."""
+    from web.main import app
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        async with app.router.lifespan_context(app):
+            yield c
+
+
+@pytest.fixture
+def pdf_bytes() -> bytes:
+    return b"%PDF-1.4 1 0 obj << /Type /Catalog >> endobj"
+
+
+@pytest.fixture
+async def uploaded_job(client, pdf_bytes):
+    """Upload a minimal PDF and return {job_id, token, filename}."""
+    resp = await client.post(
+        "/api/verify/upload",
+        files={"file": ("test.pdf", pdf_bytes, "application/pdf")},
+    )
+    assert resp.status_code == 200
+    return resp.json()

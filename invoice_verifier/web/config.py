@@ -5,8 +5,8 @@ from typing import Literal
 
 from dotenv import load_dotenv
 
-_root = Path(__file__).parent.parent
-load_dotenv(_root / "baca_invoice" / ".env")
+# web/config.py → invoice_verifier/web/ → invoice_verifier/ → project root
+_root = Path(__file__).parent.parent.parent
 load_dotenv(_root / ".env")
 
 APP_ENV: Literal["development", "production"] = os.getenv("APP_ENV", "development")  # type: ignore[assignment]

@@ -287,15 +287,6 @@ function renderResult(result) {
 function renderSummary(r, docType) {
   const auth    = r.authenticity || {};
   const verdict = verdictNormalized(auth.verdict);
-
-  // ── Logic fix: derive is_suspicious from verdict when flags disagree ──
-  // The agent's verdict string is authoritative; is_suspicious is secondary.
-  const isActuallySuspicious = auth.is_suspicious ||
-    verdict === 'MENCURIGAKAN' ||
-    verdict === 'PALSU/DIEDIT' ||
-    verdict.includes('PALSU') ||
-    verdict.includes('DIEDIT');
-
   const verdictClass = resolveVerdictClass(verdict);
   const verdictEmoji = {
     'verdict-autentik':     '✓',
