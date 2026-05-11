@@ -15,6 +15,17 @@ def isolate_rate_limit():
     rl._test_key_override = None
 
 
+@pytest.fixture(autouse=True)
+def stub_run_job(monkeypatch):
+    # Background task would call Gemini (no API key in CI) and its finally
+    # block deletes the upload dir, racing with assertions on the file.
+    async def _noop(self, job_id: str) -> None:
+        return
+
+    from web.services.agent_runner import AgentRunnerService
+    monkeypatch.setattr(AgentRunnerService, "run_job", _noop)
+
+
 @pytest.fixture
 async def client():
     """Async test client that starts the full app lifespan."""
