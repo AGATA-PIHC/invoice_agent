@@ -26,6 +26,14 @@ def stub_run_job(monkeypatch):
     monkeypatch.setattr(AgentRunnerService, "run_job", _noop)
 
 
+@pytest.fixture(autouse=True)
+def stub_classify_document(monkeypatch):
+    # Minimal test PDFs have no travel keywords, so classify_document always
+    # returns "unknown" and the upload endpoint rejects them with 422.
+    from web.api import verify
+    monkeypatch.setattr(verify, "classify_document", lambda filename, file_path: "flight")
+
+
 @pytest.fixture
 async def client():
     """Async test client that starts the full app lifespan."""
