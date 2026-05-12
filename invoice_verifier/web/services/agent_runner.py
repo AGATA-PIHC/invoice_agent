@@ -158,8 +158,12 @@ class AgentRunnerService:
         self._lock = asyncio.Lock()
         self._semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 
-    def create_job(self, job_id: str, file_path: str, filename: str, doc_type: str = "unknown") -> None:
-        self._jobs[job_id] = Job(job_id=job_id, filename=filename, file_path=file_path, doc_type=doc_type)
+    def create_job(
+        self, job_id: str, file_path: str, filename: str, doc_type: str = "unknown"
+    ) -> None:
+        self._jobs[job_id] = Job(
+            job_id=job_id, filename=filename, file_path=file_path, doc_type=doc_type
+        )
 
     def get_job(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
