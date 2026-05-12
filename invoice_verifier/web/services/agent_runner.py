@@ -11,6 +11,7 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import Literal
 
 from baca_invoice.agents.flight import flight_agent
 from baca_invoice.agents.hotel import hotel_agent
@@ -35,6 +36,7 @@ class Job:
     job_id: str
     filename: str
     file_path: str
+    doc_type: str = "unknown"
     status: JobStatus = JobStatus.PENDING
     result: dict | None = None
     error: str | None = None
@@ -68,33 +70,61 @@ _HOTEL_KEYWORDS = frozenset({
     "hotel", "penginapan", "booking", "room", "kamar", "check-in",
     "checkin", "checkout", "inn", "resort", "malam", "nights",
 })
+_AIRLINE_PROVIDERS = frozenset({"airasia", "garuda", "lion_air", "kai"})
 
 
-def _detect_doc_type(filename: str, file_path: str) -> str:
-    """Return 'flight', 'hotel', or 'unknown' without calling any LLM."""
+def _detect_by_provider(pdf_text: str) -> Literal["flight", "hotel", "unknown"]:
+    """Layer 3: match KNOWN_PROVIDERS keywords against pdf_text."""
+    from baca_invoice.tools.constants import KNOWN_PROVIDERS
+
+    for provider_name, provider_data in KNOWN_PROVIDERS.items():
+        for kw in provider_data.get("keywords", []):
+            if kw in pdf_text:
+                # Airline/train provider → definitively a transport ticket
+                if provider_name in _AIRLINE_PROVIDERS:
+                    return "flight"
+                # Booking platform found — default to hotel (safe fallback)
+                return "hotel"
+    return "unknown"
+
+
+def classify_document(filename: str, file_path: str) -> Literal["flight", "hotel", "unknown"]:
+    """Classify PDF without any LLM call. Returns 'flight', 'hotel', or 'unknown'."""
     name = filename.lower()
     f_score = sum(1 for k in _FLIGHT_KEYWORDS if k in name)
     h_score = sum(1 for k in _HOTEL_KEYWORDS if k in name)
+    pdf_text = ""
 
+    try:
+        import fitz
+        doc = fitz.open(file_path)
+        try:
+            if doc.page_count == 0:
+                return "unknown"
+            pdf_text = doc[0].get_text()[:3000].lower()
+        finally:
+            doc.close()
+    except Exception:
+        logger.warning("PDF peek failed for classify_document(%s)", filename)
+
+    f_score += sum(1 for k in _FLIGHT_KEYWORDS if k in pdf_text)
+    h_score += sum(1 for k in _HOTEL_KEYWORDS if k in pdf_text)
+
+    # No travel keywords at all — try provider metadata as last resort
+    if f_score == 0 and h_score == 0:
+        return _detect_by_provider(pdf_text) if pdf_text else "unknown"
+
+    # Clear winner
     if f_score != h_score:
         return "flight" if f_score > h_score else "hotel"
 
-    # Filename inconclusive — peek at first page of PDF text
-    try:
-        import fitz  # PyMuPDF, already a project dependency
-        doc = fitz.open(file_path)
-        try:
-            text = (doc[0].get_text()[:3000] if doc.page_count else "").lower()
-        finally:
-            doc.close()
-        f_score = sum(1 for k in _FLIGHT_KEYWORDS if k in text)
-        h_score = sum(1 for k in _HOTEL_KEYWORDS if k in text)
-        if f_score != h_score:
-            return "flight" if f_score > h_score else "hotel"
-    except Exception:
-        logger.warning("PDF peek failed for doc-type detection, defaulting to hotel")
+    # Tied with some travel keywords — use provider to break tie
+    if pdf_text:
+        provider_type = _detect_by_provider(pdf_text)
+        if provider_type != "unknown":
+            return provider_type
 
-    # Default to hotel (most common SSC document type)
+    # Tied, travel-related — default to hotel
     return "hotel"
 
 
@@ -128,15 +158,18 @@ class AgentRunnerService:
         self._lock = asyncio.Lock()
         self._semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 
-    def create_job(self, job_id: str, file_path: str, filename: str) -> None:
-        self._jobs[job_id] = Job(job_id=job_id, filename=filename, file_path=file_path)
+    def create_job(self, job_id: str, file_path: str, filename: str, doc_type: str = "unknown") -> None:
+        self._jobs[job_id] = Job(job_id=job_id, filename=filename, file_path=file_path, doc_type=doc_type)
 
     def get_job(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
 
     @property
     def active_job_count(self) -> int:
-        return len(self._jobs)
+        return sum(
+            1 for j in self._jobs.values()
+            if j.status in (JobStatus.PENDING, JobStatus.RUNNING)
+        )
 
     async def run_job(self, job_id: str) -> None:
         job = self._jobs.get(job_id)
@@ -148,8 +181,8 @@ class AgentRunnerService:
             user_id = f"user_{job_id}"
             session_id = f"session_{job_id}"
 
-            # Server-side routing — no LLM call needed for dispatch
-            doc_type = _detect_doc_type(job.filename, job.file_path)
+            # doc_type already classified at upload time — no re-detection needed
+            doc_type = job.doc_type
             runner = self._flight_runner if doc_type == "flight" else self._hotel_runner
             label = _DOC_TYPE_LABEL.get(doc_type, "Dokumen")
 
@@ -212,10 +245,11 @@ class AgentRunnerService:
             return
 
         cursor = start_cursor
-        deadline = asyncio.get_event_loop().time() + max_duration
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max_duration
 
         while True:
-            if asyncio.get_event_loop().time() >= deadline:
+            if loop.time() >= deadline:
                 break
 
             while cursor < len(job.events):

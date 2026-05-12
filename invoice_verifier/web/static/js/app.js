@@ -1,55 +1,5 @@
 'use strict';
 
-// ─── Canvas Starfield ─────────────────────────────────────────────────────────
-(function initStars() {
-  const canvas = document.getElementById('stars-canvas');
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-
-  let stars = [];
-  const COUNT = 110;
-
-  const resize = () => {
-    canvas.width  = window.innerWidth;
-    canvas.height = window.innerHeight;
-  };
-
-  const mkStar = () => ({
-    x:    Math.random() * canvas.width,
-    y:    Math.random() * canvas.height,
-    r:    Math.random() * 1.1 + 0.2,
-    a:    Math.random(),
-    da:   (Math.random() * 0.003 + 0.001) * (Math.random() < 0.5 ? 1 : -1),
-    dx:   (Math.random() - 0.5) * 0.08,
-    dy:   (Math.random() - 0.5) * 0.08,
-  });
-
-  const draw = () => {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    for (const s of stars) {
-      s.a += s.da;
-      if (s.a > 1 || s.a < 0) s.da *= -1;
-      s.x += s.dx;
-      s.y += s.dy;
-      if (s.x < 0) s.x = canvas.width;
-      if (s.x > canvas.width) s.x = 0;
-      if (s.y < 0) s.y = canvas.height;
-      if (s.y > canvas.height) s.y = 0;
-
-      ctx.beginPath();
-      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(148,163,184,${s.a * 0.55})`;
-      ctx.fill();
-    }
-    requestAnimationFrame(draw);
-  };
-
-  resize();
-  stars = Array.from({ length: COUNT }, mkStar);
-  window.addEventListener('resize', resize);
-  draw();
-})();
-
 // ─── State ────────────────────────────────────────────────────────────────────
 const state = {
   file: null,
@@ -128,7 +78,11 @@ async function startVerification() {
     const res = await fetch('/api/verify/upload', { method: 'POST', body: form });
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.detail || 'Upload gagal.');
+      if (res.status === 422 && err.detail?.code === 'UNSUPPORTED_DOCUMENT') {
+        showRejection(err.detail);
+        return;
+      }
+      throw new Error(err.detail?.message || err.detail || 'Upload gagal.');
     }
     const data = await res.json();
     state.jobId    = data.job_id;
@@ -181,7 +135,7 @@ function handleEvent(ev) {
       setProgressStatus('Verifikasi selesai!', 100);
       progressCard.querySelector('.progress-spinner').style.display = 'none';
       addLogEntry({ kind: 'done', author: 'System', text: 'Verifikasi selesai.' });
-      if (state.eventSource) state.eventSource.close();
+      if (state.eventSource) { state.eventSource.close(); state.eventSource = null; }
       if (ev.result) renderResult(ev.result);
       btnSubmit.disabled = false;
       break;
@@ -189,7 +143,7 @@ function handleEvent(ev) {
     case 'error':
       setProgressStatus('Terjadi kesalahan.', null);
       addLogEntry({ kind: 'error', author: 'System', text: ev.message });
-      if (state.eventSource) state.eventSource.close();
+      if (state.eventSource) { state.eventSource.close(); state.eventSource = null; }
       showError(ev.message);
       btnSubmit.disabled = false;
       break;
@@ -573,8 +527,8 @@ function fmt(amount, currency = 'IDR') {
 function classifyAgent(author = '') {
   const a = author.toLowerCase();
   if (a.includes('coordinator') || a.includes('invoice_verification')) return 'agent-coord';
-  if (a.includes('flight') || a.includes('pesawat'))                    return 'agent-flight';
-  if (a.includes('hotel'))                                              return 'agent-hotel';
+  if (a.includes('authenticity'))                                       return 'agent-flight';
+  if (a.includes('parser') || a.includes('document'))                  return 'agent-hotel';
   return 'agent-system';
 }
 
@@ -629,6 +583,16 @@ function showError(msg) {
   progressFill.style.background = '#ef4444';
   const spinner = progressCard.querySelector('.progress-spinner');
   if (spinner) spinner.style.display = 'none';
+}
+
+function showRejection(detail) {
+  setProgressStatus('Dokumen ditolak', 100);
+  progressFill.style.background = '#f59e0b';
+  const spinner = progressCard.querySelector('.progress-spinner');
+  if (spinner) spinner.style.display = 'none';
+  addLogEntry({ kind: 'error', author: 'System', text: detail.message });
+  if (detail.hint) addLogEntry({ kind: 'status', author: 'System', text: detail.hint });
+  btnSubmit.disabled = false;
 }
 
 function resetUI() {

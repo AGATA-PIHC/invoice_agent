@@ -9,6 +9,12 @@ class UploadResponse(BaseModel):
     token: str
 
 
+class UnsupportedDocumentError(BaseModel):
+    code: str
+    message: str
+    hint: str
+
+
 class JobStatusResponse(BaseModel):
     job_id: str
     status: str

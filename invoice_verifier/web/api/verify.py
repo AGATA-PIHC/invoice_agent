@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import shutil
 import uuid
 from pathlib import Path
 
@@ -11,7 +13,7 @@ from web.config import MAX_UPLOAD_MB, UPLOAD_DIR
 from web.dependencies import get_runner_service, make_job_token, verify_job_access
 from web.models.responses import JobResultResponse, JobStatusResponse, UploadResponse
 from web.rate_limit import limiter
-from web.services.agent_runner import JobStatus
+from web.services.agent_runner import JobStatus, classify_document
 
 router = APIRouter(prefix="/api/verify", tags=["verify"])
 
@@ -41,15 +43,34 @@ async def upload_file(
     if not dest_path.resolve().is_relative_to(UPLOAD_DIR.resolve()):
         raise HTTPException(status_code=400, detail="Nama file tidak valid.")
 
-    await _stream_to_disk(file, dest_path)
+    try:
+        await _stream_to_disk(file, dest_path)
+    except HTTPException:
+        shutil.rmtree(dest_dir, ignore_errors=True)
+        raise
+
+    doc_type = classify_document(safe_name, str(dest_path.resolve()))
+    if doc_type == "unknown":
+        shutil.rmtree(dest_dir, ignore_errors=True)
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "UNSUPPORTED_DOCUMENT",
+                "message": "Dokumen tidak dikenali sebagai tiket pesawat atau invoice hotel.",
+                "hint": (
+                    "Pastikan file PDF adalah bukti pemesanan dari penyedia seperti "
+                    "Traveloka, tiket.com, Garuda, Lion Air, atau hotel resmi."
+                ),
+            },
+        )
 
     runner_service.create_job(
         job_id=job_id,
         file_path=str(dest_path.resolve()),
         filename=safe_name,
+        doc_type=doc_type,
     )
 
-    import asyncio
     asyncio.create_task(runner_service.run_job(job_id))
 
     token = make_job_token(job_id)
@@ -88,6 +109,8 @@ async def get_result(
     runner_service=Depends(get_runner_service),
 ) -> JSONResponse:
     job = runner_service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job tidak ditemukan.")
 
     if job.status in (JobStatus.RUNNING, JobStatus.PENDING):
         return JSONResponse({"status": job.status, "result": None})
@@ -104,6 +127,8 @@ async def get_status(
     runner_service=Depends(get_runner_service),
 ) -> JSONResponse:
     job = runner_service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job tidak ditemukan.")
     return JSONResponse({
         "job_id": job_id,
         "status": job.status,
