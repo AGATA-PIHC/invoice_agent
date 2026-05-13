@@ -275,7 +275,7 @@ function renderSummary(r, docType) {
       </div>
       <div class="verdict-right">
         <div class="verdict-total">${total}</div>
-        <div class="verdict-meta">Confidence</div>
+        <div class="verdict-meta">Authentic Level</div>
         <div class="confidence-bar-wrap">
           <div class="confidence-bar-bg">
             <div class="confidence-bar-fill" id="conf-bar" style="width:0%"></div>
