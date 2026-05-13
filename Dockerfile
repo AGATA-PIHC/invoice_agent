@@ -18,14 +18,19 @@ COPY . .
 
 RUN mkdir -p tmp_uploads && chown -R appuser:appuser /app
 
+# Set env before switching user so PATH is available to healthcheck & CMD
+ENV PATH="/venv/bin:$PATH" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH="/app/invoice_verifier"
+
 USER appuser
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"
 
-ENV PATH="/venv/bin:$PATH" \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
-
-CMD ["python", "run_web.py"]
+# run_web.py binds to 127.0.0.1 (loopback only) which is unreachable from outside
+# the container. Use uvicorn directly with 0.0.0.0 so Docker can forward the port.
+# PYTHONPATH above makes `web.main` importable from /app/invoice_verifier/.
+CMD ["uvicorn", "web.main:app", "--host", "0.0.0.0", "--port", "8080"]
