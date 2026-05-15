@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
+from web.api.travel import router as travel_router
 from web.api.verify import router as verify_router
 from web.config import IS_PRODUCTION, UPLOAD_DIR
 from web.middleware import RequestIDMiddleware, SecurityHeadersMiddleware
@@ -69,6 +70,7 @@ app.add_middleware(RequestIDMiddleware)
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.include_router(verify_router)
+app.include_router(travel_router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["ops"])

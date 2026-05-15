@@ -159,6 +159,128 @@ Liveness check for load balancers.
 
 ---
 
+## Travel Integration API (PISmart → PINTER)
+
+Endpoint khusus untuk integrasi mesin-ke-mesin antara **PISmart (A)** dan **PINTER (B)**.
+Alur: kirim dokumen → terima `transaction_id` → poll hasil.
+
+### Authentication
+
+Set header `X-API-Key: <key>` pada setiap request.
+Konfigurasi key via env var `TRAVEL_API_KEY`. Jika tidak diset, auth dinonaktifkan (development only).
+
+---
+
+### POST /api/travel/submit
+
+Kirim dokumen PDF travel (invoice atau receipt) untuk diverifikasi.
+
+**Request:** `application/json`
+
+```json
+{
+  "document_type": "invoice",
+  "source_system": "PISmart",
+  "reference_id": "TRX-2026-0001",
+  "filename": "hotel_invoice.pdf",
+  "file_base64": "<base64-encoded PDF>"
+}
+```
+
+| Field | Type | Deskripsi |
+|-------|------|-----------|
+| `document_type` | `"invoice"` \| `"receipt"` | `invoice` = tagihan, `receipt` = bukti bayar |
+| `source_system` | string | Nama sistem pengirim |
+| `reference_id` | string | ID transaksi dari sisi PISmart |
+| `filename` | string | Nama file, harus berakhiran `.pdf` |
+| `file_base64` | string | Isi file PDF di-encode base64 |
+
+**Response 200:**
+```json
+{
+  "transaction_id": "9f1a2b3c-...",
+  "reference_id": "TRX-2026-0001",
+  "status": "processing",
+  "submitted_at": "2026-05-15T08:00:00+00:00"
+}
+```
+
+**Error codes:** `400` validasi gagal, `401` API key salah
+
+---
+
+### GET /api/travel/result/{transaction_id}
+
+Poll hasil verifikasi. Ulangi hingga `status` bukan `"processing"`.
+
+**Response 200 (masih diproses):**
+```json
+{
+  "transaction_id": "9f1a2b3c-...",
+  "reference_id": "TRX-2026-0001",
+  "document_type": "invoice",
+  "status": "processing",
+  "ocr_confidence": null,
+  "result": null,
+  "warning": null,
+  "error": null,
+  "completed_at": null
+}
+```
+
+**Response 200 (selesai):**
+```json
+{
+  "transaction_id": "9f1a2b3c-...",
+  "reference_id": "TRX-2026-0001",
+  "document_type": "invoice",
+  "status": "completed",
+  "ocr_confidence": 0.87,
+  "result": { /* FlightTicketResult atau HotelInvoiceResult — lihat Result Schemas */ },
+  "warning": null,
+  "error": null,
+  "completed_at": "2026-05-15T08:00:45+00:00"
+}
+```
+
+**Response 200 (confidence rendah — tetap dikembalikan, tidak jadi stopper):**
+```json
+{
+  "status": "completed",
+  "ocr_confidence": 0.45,
+  "result": { /* data parsial */ },
+  "warning": "OCR confidence rendah (45%), disarankan review manual.",
+  "error": null
+}
+```
+
+**Response 200 (gagal — tidak throw 500):**
+```json
+{
+  "status": "failed",
+  "ocr_confidence": null,
+  "result": null,
+  "warning": null,
+  "error": "Terjadi kesalahan saat memproses dokumen."
+}
+```
+
+`status` values: `processing` | `completed` | `failed`
+
+**Error codes:** `401` API key salah, `404` transaction_id tidak ditemukan
+
+---
+
+### Catatan Desain
+
+- **Non-blocking**: POST /submit langsung return `transaction_id`, proses OCR berjalan di background.
+- **Jangan jadi stopper**: Hasil selalu dikembalikan meski OCR gagal atau confidence rendah. PISmart tetap bisa melanjutkan prosesnya.
+- **Distinction Invoice vs Receipt**: Field `document_type` di-echo back ke response. Konten OCR (data tiket/hotel) sama untuk keduanya.
+- **Fallback doc_type**: Jika auto-detect gagal mengenali jenis dokumen, sistem fallback ke `"hotel"` daripada menolak request.
+- **Polling interval**: Disarankan poll setiap 3–5 detik. Rata-rata waktu proses 10–30 detik tergantung dokumen.
+
+---
+
 ## Known Limitations
 
 - **No persistent auth** — `JOB_SECRET_KEY` is auto-generated on startup if not set in `.env`,
