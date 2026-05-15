@@ -13,11 +13,27 @@ _CSP = (
     "connect-src 'self';"
 )
 
+_CSP_DOCS = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
+    "font-src 'self' https://fonts.gstatic.com; "
+    "img-src 'self' data: https://fastapi.tiangolo.com; "
+    "connect-src 'self';"
+)
+
+# Paths that serve Swagger/ReDoc UI
+_DOCS_PATHS = ("/docs", "/redoc", "/openapi.json")
+
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         response = await call_next(request)
-        response.headers.setdefault("Content-Security-Policy", _CSP)
+        if request.url.path in _DOCS_PATHS:
+            csp = _CSP_DOCS
+        else:
+            csp = _CSP
+        response.headers.setdefault("Content-Security-Policy", csp)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
