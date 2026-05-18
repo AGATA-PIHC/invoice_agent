@@ -9,7 +9,7 @@ from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Security, UploadFile
+from fastapi import APIRouter, Depends, Request, Security, UploadFile
 from fastapi import File as FastAPIFile
 from fastapi.security import APIKeyHeader
 
@@ -49,7 +49,7 @@ def _verify_api_key(api_key: str | None = Security(_api_key_header)) -> None:
     if not PINTER_API_KEY:
         return
     if not api_key or api_key != PINTER_API_KEY:
-        raise HTTPException(status_code=401, detail="X-API-Key tidak valid atau tidak ada.")
+        raise V1ApiError(401, "X-API-Key tidak valid atau tidak ada.", "UNAUTHORIZED")
 
 
 @router.post(

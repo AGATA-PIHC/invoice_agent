@@ -2,382 +2,284 @@
 
 Base URL: `http://localhost:8080`
 
----
-
-## Authentication
-
-Upload returns a `token` (HMAC-SHA256 of `job_id`). All subsequent job endpoints require
-`?token=<token>` as a query parameter.
+Autentikasi: header `X-API-Key` (env `PINTER_API_KEY`; nonaktif kalau tidak diset).
+Format response error seragam:
+```json
+{ "status": "fail", "message": "...", "error_code": "MACHINE_READABLE_CODE" }
+```
 
 ---
 
 ## Endpoints
 
-### POST /api/verify/upload
+### 1. `POST /api/pinter/upload`
 
-Upload a PDF invoice for verification.
+Upload PDF untuk diekstraksi. Proses berjalan async di background.
 
-**Rate limit:** 10 requests / minute per IP
+**Request**:
+- `Content-Type: multipart/form-data`
+- Field `file`: PDF, max 20 MB (env `MAX_UPLOAD_MB`)
+- Header `X-API-Key` (opsional, tergantung config)
 
-**Request:** `multipart/form-data`
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `file` | File | PDF file, max 20 MB |
-
-**Response 200:**
+**Response 200 — Doc type invoice/receipt**:
 ```json
 {
-  "job_id": "3f8a1c2d-...",
-  "filename": "invoice.pdf",
-  "token": "a3f9b..."
+  "trx_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "progress",
+  "message": "Dokumen diterima dan sedang diproses."
 }
 ```
 
-**Error codes:** `400` invalid file, `413` file too large, `429` rate limited
-
----
-
-### GET /api/verify/{job_id}/stream?token={token}
-
-Server-Sent Events stream of agent activity. Reconnect-safe via `Last-Event-ID`.
-
-**Event types:**
-
-#### `status`
-```json
-{ "type": "status", "message": "Memulai verifikasi dokumen..." }
-```
-
-#### `agent_event`
-```json
-{ "type": "agent_event", "author": "coordinator_agent", "kind": "tool_call", "tool": "hotel_invoice_agent" }
-{ "type": "agent_event", "author": "hotel_invoice_agent", "kind": "tool_result", "tool": "hotel_invoice_agent", "success": true }
-{ "type": "agent_event", "author": "hotel_extractor_agent", "kind": "text", "text": "Extracting hotel data..." }
-```
-
-`kind` values: `tool_call` | `tool_result` | `text`
-
-#### `complete`
+**Response 200 — Doc type unknown**:
 ```json
 {
-  "type": "complete",
-  "result": { /* FlightTicketResult or HotelInvoiceResult — see below */ }
+  "trx_id": "...",
+  "status": "progress",
+  "message": "Dokumen diterima. Tidak dikenali sebagai invoice/receipt — akan dikembalikan dengan doc_type='unknown'."
 }
 ```
 
-#### `error`
-```json
-{ "type": "error", "message": "Terjadi kesalahan saat memproses dokumen." }
-```
+**Response Errors**:
 
-**Keepalive:** SSE comments (`: keepalive`) are sent every 15 s to prevent proxy timeouts.
+| HTTP | error_code | Penyebab |
+|------|------------|----------|
+| 400 | `MISSING_FILE` | Field `file` kosong |
+| 400 | `INVALID_FILE_TYPE` | Bukan PDF (ekstensi/magic bytes) |
+| 401 | `UNAUTHORIZED` | X-API-Key salah/tidak ada |
+| 413 | `FILE_TOO_LARGE` | Melebihi 20 MB |
+| 429 | `RATE_LIMITED` | > 10 upload/menit/IP |
+| 500 | `INTERNAL_ERROR` | Error server |
 
 ---
 
-### GET /api/verify/{job_id}/status?token={token}
+### 2. `GET /api/pinter/extract?trx_id={trx_id}`
 
-Poll job status without streaming.
+Poll hasil ekstraksi.
 
-**Response 200:**
+**Response 200 — Masih progress**:
 ```json
 {
-  "job_id": "3f8a1c2d-...",
-  "status": "running",
-  "filename": "invoice.pdf",
-  "event_count": 5,
-  "error": null
+  "trx_id": "...",
+  "status": "progress",
+  "message": "Dokumen sedang diproses.",
+  "data": null
 }
 ```
 
-`status` values: `pending` | `running` | `done` | `error`
-
----
-
-### GET /api/verify/{job_id}/result?token={token}
-
-Retrieve the final parsed result.
-
-**Response 200 (done):**
-```json
-{ "status": "done", "result": { /* FlightTicketResult or HotelInvoiceResult */ } }
-```
-
-**Response 200 (still running):**
-```json
-{ "status": "running", "result": null }
-```
-
----
-
-### GET /health
-
-Liveness check for load balancers.
-
-**Response 200:**
-```json
-{ "status": "ok", "jobs_active": 3 }
-```
-
----
-
-## Result Schemas
-
-### FlightTicketResult (key fields)
-
-| Field | Type |
-|-------|------|
-| `receipt_number` | string |
-| `airline` | string |
-| `route_from` / `route_to` | string |
-| `flight_date` | string |
-| `total_payment` | number |
-| `currency` | string |
-| `authenticity` | DocumentAuthenticity |
-
-### HotelInvoiceResult (key fields)
-
-| Field | Type |
-|-------|------|
-| `hotel_name` | string |
-| `check_in_date` / `check_out_date` | string |
-| `total_nights` | number |
-| `total_payment` | number |
-| `currency` | string |
-| `authenticity` | DocumentAuthenticity |
-
-### DocumentAuthenticity
-
-| Field | Type | Values |
-|-------|------|--------|
-| `verdict` | string | `AUTENTIK` \| `MENCURIGAKAN` \| `PALSU/DIEDIT` |
-| `is_suspicious` | boolean | |
-| `confidence_score` | float | 0.0 – 1.0 |
-| `fake_evidence` | string[] | |
-| `warning_flags` | string[] | |
-| `analysis_notes` | string | |
-
----
-
-## Travel Integration API (PISmart → PINTER)
-
-Endpoint khusus untuk integrasi mesin-ke-mesin antara **PISmart (A)** dan **PINTER (B)**.
-Alur: kirim dokumen → terima `transaction_id` → poll hasil.
-
-### Authentication
-
-Set header `X-API-Key: <key>` pada setiap request.
-Konfigurasi key via env var `TRAVEL_API_KEY`. Jika tidak diset, auth dinonaktifkan (development only).
-
----
-
-### POST /api/travel/submit
-
-Kirim dokumen PDF travel (invoice atau receipt) untuk diverifikasi.
-
-**Request:** `application/json`
-
+**Response 200 — Success (doc_type=invoice)**:
 ```json
 {
-  "document_type": "invoice",
-  "source_system": "PISmart",
-  "reference_id": "TRX-2026-0001",
-  "filename": "hotel_invoice.pdf",
-  "file_base64": "<base64-encoded PDF>"
-}
-```
-
-| Field | Type | Deskripsi |
-|-------|------|-----------|
-| `document_type` | `"invoice"` \| `"receipt"` | `invoice` = tagihan, `receipt` = bukti bayar |
-| `source_system` | string | Nama sistem pengirim |
-| `reference_id` | string | ID transaksi dari sisi PISmart |
-| `filename` | string | Nama file, harus berakhiran `.pdf` |
-| `file_base64` | string | Isi file PDF di-encode base64 |
-
-**Response 200:**
-```json
-{
-  "transaction_id": "9f1a2b3c-...",
-  "reference_id": "TRX-2026-0001",
-  "status": "processing",
-  "submitted_at": "2026-05-15T08:00:00+00:00"
-}
-```
-
-**Error codes:** `400` validasi gagal, `401` API key salah
-
----
-
-### GET /api/travel/result/{transaction_id}
-
-Poll hasil verifikasi. Ulangi hingga `status` bukan `"processing"`.
-
-**Response 200 (masih diproses):**
-```json
-{
-  "transaction_id": "9f1a2b3c-...",
-  "reference_id": "TRX-2026-0001",
-  "document_type": "invoice",
-  "status": "processing",
-  "ocr_confidence": null,
-  "result": null,
-  "warning": null,
-  "error": null,
-  "completed_at": null
-}
-```
-
-**Response 200 (selesai):**
-```json
-{
-  "transaction_id": "9f1a2b3c-...",
-  "reference_id": "TRX-2026-0001",
-  "document_type": "invoice",
-  "status": "completed",
-  "ocr_confidence": 0.87,
-  "result": { /* FlightTicketResult atau HotelInvoiceResult — lihat Result Schemas */ },
-  "warning": null,
-  "error": null,
-  "completed_at": "2026-05-15T08:00:45+00:00"
-}
-```
-
-**Response 200 (confidence rendah — tetap dikembalikan, tidak jadi stopper):**
-```json
-{
-  "status": "completed",
-  "ocr_confidence": 0.45,
-  "result": { /* data parsial */ },
-  "warning": "OCR confidence rendah (45%), disarankan review manual.",
-  "error": null
-}
-```
-
-**Response 200 (gagal — tidak throw 500):**
-```json
-{
-  "status": "failed",
-  "ocr_confidence": null,
-  "result": null,
-  "warning": null,
-  "error": "Terjadi kesalahan saat memproses dokumen."
-}
-```
-
-`status` values: `processing` | `completed` | `failed`
-
-**Error codes:** `401` API key salah, `404` transaction_id tidak ditemukan
-
----
-
-### Catatan Desain
-
-- **Non-blocking**: POST /submit langsung return `transaction_id`, proses OCR berjalan di background.
-- **Jangan jadi stopper**: Hasil selalu dikembalikan meski OCR gagal atau confidence rendah. PISmart tetap bisa melanjutkan prosesnya.
-- **Distinction Invoice vs Receipt**: Field `document_type` di-echo back ke response. Konten OCR (data tiket/hotel) sama untuk keduanya.
-- **Fallback doc_type**: Jika auto-detect gagal mengenali jenis dokumen, sistem fallback ke `"hotel"` daripada menolak request.
-- **Polling interval**: Disarankan poll setiap 3–5 detik. Rata-rata waktu proses 10–30 detik tergantung dokumen.
-
----
-
----
-
-## PINTER API — PISmart Integration (Upload & Extract)
-
-Endpoint machine-to-machine antara **PISmart (A)** dan **PINTER (B)**.
-Hasil ekstraksi disimpan persisten di **SQLite** — tersedia meski server restart.
-
-### Authentication
-
-Set header `X-API-Key: <key>` pada setiap request ke `/api/pinter/`.
-Konfigurasi key via env var `PINTER_API_KEY`. Jika tidak diset, auth dinonaktifkan (development only).
-
-### POST /api/pinter/upload
-
-Upload file PDF invoice/receipt untuk diekstraksi.
-
-**Headers:** `X-API-Key: <key>`
-
-**Request:** `multipart/form-data`
-
-| Field | Tipe | Keterangan |
-|-------|------|-----------|
-| `file` | File (PDF) | File PDF, maks 20 MB |
-
-**Response 200:**
-```json
-{ "trx_id": "uuid", "status": "progress", "message": "Dokumen diterima dan sedang diproses." }
-```
-
-**Error codes:** `400` file tidak valid / bukan PDF, `401` API key salah, `413` file terlalu besar, `500` internal error
-
----
-
-### GET /api/pinter/extract?trx_id={trx_id}
-
-Poll hasil ekstraksi. Ulangi hingga `status` bukan `"progress"`.
-
-**Headers:** `X-API-Key: <key>`
-
-**Query parameter:**
-
-| Param | Tipe | Keterangan |
-|-------|------|-----------|
-| `trx_id` | string (UUID) | ID transaksi dari response `POST /upload` |
-
-**Response 200 (progress):**
-```json
-{ "trx_id": "uuid", "status": "progress", "message": "Dokumen sedang diproses.", "data": null }
-```
-
-**Response 200 (success):**
-```json
-{
-  "trx_id": "uuid",
+  "trx_id": "...",
   "status": "success",
   "message": "Ekstraksi berhasil.",
-  "data": { /* seluruh JSON hasil agent — FlightTicketResult atau HotelInvoiceResult */ }
+  "data": {
+    "doc_type": "invoice",
+    "invoice_number": "INV-2026/001",
+    "vendor_name": "PT Hotel Indah",
+    "buyer_name": "...",
+    "line_items": [
+      { "description": "...", "quantity": 2, "unit_price": 850000, "subtotal": 1700000 }
+    ],
+    "subtotal": 1700000.0,
+    "tax": 187000.0,
+    "total_payment": 1887000.0,
+    "currency": "IDR",
+    "authenticity": { /* DocumentAuthenticity */ },
+    "extraction_confidence": 0.85,
+    "requires_manual_review": false,
+    "summary": "Invoice PT Hotel Indah, INV-2026/001, Total: Rp 1.887.000."
+  }
 }
 ```
 
-**Response 200 (fail):**
+**Response 200 — Success (doc_type=receipt)**:
 ```json
-{ "trx_id": "uuid", "status": "fail", "message": "Ekstraksi gagal: ...", "data": null }
+{
+  "trx_id": "...",
+  "status": "success",
+  "message": "Ekstraksi berhasil.",
+  "data": {
+    "doc_type": "receipt",
+    "receipt_number": "TRX-987654321",
+    "merchant_name": "Garuda Indonesia",
+    "payer_name": "Budi Santoso",
+    "items_purchased": [
+      { "description": "Tiket CGK→DPS", "quantity": 1, "price": 1250000 }
+    ],
+    "total_payment": 1275000.0,
+    "currency": "IDR",
+    "payment_method": "Kartu Kredit",
+    "payment_status": "paid",
+    "authenticity": { /* DocumentAuthenticity */ },
+    "extraction_confidence": 0.85,
+    "summary": "Garuda Indonesia CGK→DPS. Total: Rp 1.275.000."
+  }
+}
 ```
 
-**Error codes:** `401` API key salah, `404` trx_id tidak ditemukan, `410` trx_id kedaluwarsa, `500` internal error
+**Response 200 — Success (doc_type=unknown)**:
 
-### Format Error Konsisten (semua endpoint /api/pinter/)
+Untuk dokumen tidak terklasifikasi, sistem **tidak memanggil AI** — hanya analisis `authenticity` PDF.
 
 ```json
-{ "status": "fail", "message": "pesan human-readable", "error_code": "MACHINE_READABLE_CODE" }
+{
+  "trx_id": "...",
+  "status": "success",
+  "message": "Ekstraksi berhasil.",
+  "data": {
+    "doc_type": "unknown",
+    "authenticity": { /* DocumentAuthenticity */ },
+    "extraction_confidence": 0.0,
+    "requires_manual_review": true,
+    "review_reasons": ["Dokumen tidak dikenali sebagai invoice atau receipt."],
+    "summary": "Dokumen tidak terklasifikasi. Tidak ada data yang diekstraksi."
+  }
+}
 ```
 
-| error_code | HTTP | Kondisi |
-|---|---|---|
-| `MISSING_FILE` | 400 | Field file tidak ada |
-| `INVALID_FILE_TYPE` | 400 | Bukan PDF |
-| `FILE_TOO_LARGE` | 413 | Melebihi batas ukuran |
-| `TRX_NOT_FOUND` | 404 | trx_id tidak dikenal |
-| `TRX_EXPIRED` | 410 | trx_id melewati TTL (default 7 hari) |
-| `INTERNAL_ERROR` | 500 | Error internal server |
+**Response 200 — Status fail**:
+```json
+{
+  "trx_id": "...",
+  "status": "fail",
+  "message": "Verifikasi gagal: <detail>",
+  "data": null
+}
+```
 
-### Catatan Desain PINTER
+**Response Errors**:
 
-- **Auth**: `X-API-Key` header (konfigurasi via `PINTER_API_KEY`). Jika env var tidak diset, auth bypass (dev only).
-- **Persistent**: Hasil disimpan di SQLite (`SQLITE_DB_PATH`) — tersedia meski server restart.
-- **Non-blocking**: POST /upload langsung return `trx_id`, proses berjalan di background.
-- **Data lengkap**: Field `data` berisi seluruh output JSON dari AI agent tanpa disaring.
-- **Polling interval**: Disarankan poll setiap 3–5 detik. Timeout praktis: 60 detik (job rata-rata 10–30 detik).
-- **TTL trx_id**: Default 7 hari (`PINTER_TRX_TTL_DAYS`). Setelah lewat, GET extract return `TRX_EXPIRED` (HTTP 410).
+| HTTP | error_code | Penyebab |
+|------|------------|----------|
+| 400 | `MISSING_TRX_ID` | Query `trx_id` tidak ada |
+| 400 | `VALIDATION_ERROR` | Format param tidak valid |
+| 401 | `UNAUTHORIZED` | X-API-Key salah/tidak ada |
+| 404 | `TRX_NOT_FOUND` | trx_id tidak ada di DB |
+| 410 | `TRX_EXPIRED` | trx_id > `PINTER_TRX_TTL_DAYS` (default 7 hari) |
+| 500 | `INTERNAL_ERROR` | Error server |
 
 ---
 
-## Known Limitations
+### 3. `GET /health`
 
-- **No persistent auth** — `JOB_SECRET_KEY` is auto-generated on startup if not set in `.env`,
-  meaning job tokens are invalidated on server restart. Set `JOB_SECRET_KEY` in `.env` for persistence.
-- **Single-process only** — In-memory job state cannot be shared across multiple workers/replicas.
-- **No horizontal scaling** — Run a single process or use an external task queue (Celery, ARQ) for scale-out.
-- **PDF content validation** — Only extension and size are checked; malformed PDFs may cause agent errors.
+Liveness check.
+
+**Response 200**:
+```json
+{
+  "status": "ok",
+  "jobs_active": 0
+}
+```
+
+---
+
+## DocumentAuthenticity Schema
+
+Sub-schema yang muncul di response semua doc_type:
+
+```json
+{
+  "verdict": "AUTENTIK",
+  "is_suspicious": false,
+  "confidence_score": 0.95,
+  "detected_provider": "tiket.com",
+  "pdf_creator": "Mozilla/5.0...HeadlessChrome...",
+  "pdf_producer": "Skia/PDF m140",
+  "creation_date": "2026-04-23T14:17:38",
+  "modification_date": "2026-04-23T14:17:38",
+  "was_modified": false,
+  "warning_flags": [],
+  "fake_evidence": [],
+  "analysis_notes": "Tidak ditemukan indikator kecurangan."
+}
+```
+
+`verdict` values: `AUTENTIK` | `MENCURIGAKAN` | `PALSU/DIEDIT` | `-`
+
+---
+
+## 2-Stage Classification
+
+Sistem mengklasifikasikan dokumen dalam 2 tahap independen:
+
+1. **Stage 1** — `classify_document()` → `"invoice"` / `"receipt"` / `"unknown"` (jadi `doc_type` di response)
+2. **Stage 2** — `classify_sub_type()` → `"hotel"` / `"flight"` / `None` (routing internal ke agent spesifik)
+
+Routing agent:
+- `hotel` → `hotel_agent` (extractor invoice hotel)
+- `flight` → `flight_agent` (extractor tiket pesawat)
+- invoice tanpa sub_type → `invoice_agent` (generic)
+- receipt tanpa sub_type → `receipt_agent` (generic)
+
+Field `data.doc_type` di response **selalu** `invoice` / `receipt` / `unknown` — tidak pernah `hotel` / `flight`. Sub-type hanya internal.
+
+---
+
+## Klien Contoh
+
+### curl
+
+```bash
+# Upload
+curl -X POST http://localhost:8080/api/pinter/upload \
+  -H "X-API-Key: your_key" \
+  -F "file=@invoice.pdf"
+
+# Poll
+curl "http://localhost:8080/api/pinter/extract?trx_id=550e8400-..." \
+  -H "X-API-Key: your_key"
+```
+
+### Python (httpx)
+
+```python
+import httpx, time
+
+API = "http://localhost:8080"
+HEADERS = {"X-API-Key": "your_key"}
+
+with httpx.Client() as c:
+    with open("invoice.pdf", "rb") as f:
+        r = c.post(f"{API}/api/pinter/upload", files={"file": f}, headers=HEADERS)
+    r.raise_for_status()
+    trx_id = r.json()["trx_id"]
+
+    while True:
+        r = c.get(f"{API}/api/pinter/extract", params={"trx_id": trx_id}, headers=HEADERS)
+        data = r.json()
+        if data["status"] != "progress":
+            break
+        time.sleep(1.5)
+
+    if data["status"] == "success":
+        result = data["data"]
+        print(f"doc_type: {result['doc_type']}")
+        print(f"summary: {result['summary']}")
+```
+
+### JavaScript (browser)
+
+```javascript
+// Optional: set API key once via DevTools console
+localStorage.setItem('pinterApiKey', '<key>');
+
+const headers = () => {
+  const k = localStorage.getItem('pinterApiKey');
+  return k ? { 'X-API-Key': k } : {};
+};
+
+// Upload
+const form = new FormData();
+form.append('file', fileObj);
+const up = await fetch('/api/pinter/upload', { method: 'POST', body: form, headers: headers() });
+const { trx_id } = await up.json();
+
+// Poll
+while (true) {
+  const r = await fetch(`/api/pinter/extract?trx_id=${trx_id}`, { headers: headers() });
+  const body = await r.json();
+  if (body.status !== 'progress') break;
+  await new Promise(r => setTimeout(r, 1500));
+}
+```

@@ -49,6 +49,9 @@ async def test_x_api_key_auth_when_configured(client, pdf_bytes, monkeypatch):
         files={"file": ("inv.pdf", pdf_bytes, "application/pdf")},
     )
     assert resp.status_code == 401
+    body = resp.json()
+    assert body["status"] == "fail"
+    assert body["error_code"] == "UNAUTHORIZED"
 
     resp = await client.post(
         "/api/pinter/upload",

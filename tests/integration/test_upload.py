@@ -37,7 +37,8 @@ async def test_upload_job_created_in_db(client, pdf_bytes):
     trx_id = resp.json()["trx_id"]
     record = await get_job(trx_id)
     assert record is not None
-    assert record["status"] == "progress"
+    # Background task may have completed by now in fast mock — accept either state
+    assert record["status"] in ("progress", "success")
     assert record["filename"] == "test.pdf"
 
 

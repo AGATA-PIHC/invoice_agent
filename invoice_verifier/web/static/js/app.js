@@ -4,6 +4,13 @@
 const POLL_INTERVAL_MS = 1500;
 const MAX_POLL_ATTEMPTS = 200; // ~5 menit
 
+// ─── API key (opsional) ───────────────────────────────────────────────────────
+// Admin dapat set via DevTools: localStorage.setItem('pinterApiKey', '<key>')
+function _authHeaders() {
+  const key = localStorage.getItem('pinterApiKey');
+  return key ? { 'X-API-Key': key } : {};
+}
+
 // ─── State ────────────────────────────────────────────────────────────────────
 const state = {
   file: null,
@@ -77,7 +84,11 @@ async function startVerification() {
   form.append('file', state.file);
 
   try {
-    const res = await fetch('/api/pinter/upload', { method: 'POST', body: form });
+    const res = await fetch('/api/pinter/upload', {
+      method: 'POST',
+      body: form,
+      headers: _authHeaders(),
+    });
     const body = await res.json();
 
     if (!res.ok) {
@@ -109,7 +120,9 @@ async function pollResult() {
   state.pollAttempts++;
 
   try {
-    const res = await fetch(`/api/pinter/extract?trx_id=${encodeURIComponent(state.trxId)}`);
+    const res = await fetch(`/api/pinter/extract?trx_id=${encodeURIComponent(state.trxId)}`, {
+      headers: _authHeaders(),
+    });
     const body = await res.json();
 
     if (!res.ok) {
