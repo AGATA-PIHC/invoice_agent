@@ -1,5 +1,7 @@
 # Implementation Plan: Upload & Extract Invoice API v1
 
+> **⚠️ SUPERSEDED (2026-05-19)** — Endpoint final memakai prefix `/api/pinter/`, bukan `/api/v1/`. Lihat [spec.md](./spec.md) untuk detail. Sumber kebenaran aktif: [`README.md`](../../../README.md) dan [`web/API.md`](../../../web/API.md).
+
 **Branch**: `002-upload-extract-api` | **Date**: 2026-05-18 | **Spec**: [spec.md](./spec.md)
 
 ## Summary

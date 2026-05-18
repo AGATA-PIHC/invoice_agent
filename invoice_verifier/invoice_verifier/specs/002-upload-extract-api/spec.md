@@ -1,10 +1,25 @@
 # Feature Specification: Upload & Extract Invoice API v1
 
+> **⚠️ STATUS: SUPERSEDED (2026-05-19)**
+>
+> Spec ini menyebut endpoint `/api/v1/upload` dan `/api/v1/extract/{trx_id}` yang **TIDAK PERNAH** diimplementasikan dengan prefix tersebut. Implementasi final memakai prefix `/api/pinter/`:
+> - `POST /api/v1/upload` → **`POST /api/pinter/upload`**
+> - `GET /api/v1/extract/{trx_id}` → **`GET /api/pinter/extract?trx_id={trx_id}`** (query param, bukan path param)
+>
+> Sumber kebenaran aktif:
+> - [`README.md`](../../../README.md) (root invoice_verifier)
+> - [`web/API.md`](../../../web/API.md) — API reference lengkap
+> - [`specs/002-frontend-error-consistency/`](../../../specs/002-frontend-error-consistency/) — spec aktif terkini
+>
+> Spec ini dipertahankan sebagai catatan historis perancangan awal. **Jangan jadikan rujukan untuk integrasi PISmart.**
+
+---
+
 **Feature Branch**: `002-upload-extract-api`
 
 **Created**: 2026-05-18
 
-**Status**: Draft
+**Status**: ~~Draft~~ **SUPERSEDED**
 
 **Input**: Endpoint POST /api/v1/upload dan GET /api/v1/extract/{trx_id} untuk integrasi PISmart → PINTER secara asynchronous.
 
