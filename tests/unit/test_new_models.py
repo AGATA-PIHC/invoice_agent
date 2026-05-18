@@ -7,10 +7,9 @@ from unittest.mock import MagicMock
 for _mod in ("fitz", "google", "google.adk", "baca_invoice.tools", "baca_invoice.tools.constants"):
     sys.modules.setdefault(_mod, MagicMock())
 
-from baca_invoice.models.invoice import InvoiceLineItem, InvoiceResult
-from baca_invoice.models.receipt import ReceiptItem, ReceiptResult
-from baca_invoice.models.unknown import UnknownResult
-
+from baca_invoice.models.invoice import InvoiceLineItem, InvoiceResult  # noqa: E402
+from baca_invoice.models.receipt import ReceiptItem, ReceiptResult  # noqa: E402
+from baca_invoice.models.unknown import UnknownResult  # noqa: E402
 
 # ── InvoiceLineItem ───────────────────────────────────────────────────────────
 
@@ -60,7 +59,11 @@ def test_invoice_result_with_line_items():
         invoice_number="INV-001",
         vendor_name="PT Hotel Indah",
         total_payment=1887000.0,
-        line_items=[InvoiceLineItem(description="Kamar Deluxe", quantity=2, unit_price=850000, subtotal=1700000)],
+        line_items=[
+            InvoiceLineItem(
+                description="Kamar Deluxe", quantity=2, unit_price=850000, subtotal=1700000
+            )
+        ],
     )
     assert result.invoice_number == "INV-001"
     assert len(result.line_items) == 1
@@ -123,7 +126,8 @@ def test_unknown_result_defaults():
     assert result.extraction_confidence == 0.0
     assert result.requires_manual_review is True
     assert len(result.review_reasons) == 1
-    assert "invoice" in result.review_reasons[0].lower() or "unknown" in result.review_reasons[0].lower()
+    reason = result.review_reasons[0].lower()
+    assert "invoice" in reason or "unknown" in reason
     assert result.summary != ""
 
 
