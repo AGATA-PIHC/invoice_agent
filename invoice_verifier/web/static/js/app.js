@@ -1,13 +1,15 @@
 'use strict';
 
+// ─── Konstanta ────────────────────────────────────────────────────────────────
+const POLL_INTERVAL_MS = 1500;
+const MAX_POLL_ATTEMPTS = 200; // ~5 menit
+
 // ─── State ────────────────────────────────────────────────────────────────────
 const state = {
   file: null,
-  jobId: null,
-  jobToken: null,
-  eventSource: null,
-  eventCount: 0,
-  totalExpectedEvents: 8,
+  trxId: null,
+  pollTimer: null,
+  pollAttempts: 0,
 };
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
@@ -75,171 +77,103 @@ async function startVerification() {
   form.append('file', state.file);
 
   try {
-    const res = await fetch('/api/verify/upload', { method: 'POST', body: form });
-    if (!res.ok) {
-      const err = await res.json();
-      if (res.status === 422 && err.detail?.code === 'UNSUPPORTED_DOCUMENT') {
-        showRejection(err.detail);
-        return;
-      }
-      throw new Error(err.detail?.message || err.detail || 'Upload gagal.');
-    }
-    const data = await res.json();
-    state.jobId    = data.job_id;
-    state.jobToken = data.token;
-    jobIdLabel.textContent = `Job ${data.job_id.slice(0, 8)}…`;
+    const res = await fetch('/api/pinter/upload', { method: 'POST', body: form });
+    const body = await res.json();
 
-    setProgressStatus('Terhubung ke agent...', 10);
-    connectSSE(state.jobId, state.jobToken);
+    if (!res.ok) {
+      const msg = body.message || 'Upload gagal.';
+      const code = body.error_code || 'UNKNOWN';
+      showError(`${msg} (${code})`);
+      btnSubmit.disabled = false;
+      return;
+    }
+
+    state.trxId = body.trx_id;
+    jobIdLabel.textContent = `Trx ${body.trx_id.slice(0, 8)}…`;
+    addLogEntry({ kind: 'status', author: 'System', text: body.message });
+    setProgressStatus('Memproses dokumen...', 15);
+    pollResult();
   } catch (e) {
     showError(e.message);
+    btnSubmit.disabled = false;
   }
 }
 
-// ─── SSE ──────────────────────────────────────────────────────────────────────
-function connectSSE(jobId, token) {
-  if (state.eventSource) state.eventSource.close();
+// ─── Polling ──────────────────────────────────────────────────────────────────
+async function pollResult() {
+  if (state.pollAttempts >= MAX_POLL_ATTEMPTS) {
+    showError('Timeout — proses ekstraksi terlalu lama.');
+    btnSubmit.disabled = false;
+    return;
+  }
+  state.pollAttempts++;
 
-  const url = `/api/verify/${jobId}/stream?token=${encodeURIComponent(token)}`;
-  const es = new EventSource(url);
-  state.eventSource = es;
+  try {
+    const res = await fetch(`/api/pinter/extract?trx_id=${encodeURIComponent(state.trxId)}`);
+    const body = await res.json();
 
-  es.onmessage = e => {
-    try { handleEvent(JSON.parse(e.data)); } catch (_) {}
-  };
-
-  es.onerror = () => {
-    es.close();
-    if (state.jobId && state.jobToken) {
-      setTimeout(() => connectSSE(state.jobId, state.jobToken), 1500);
+    if (!res.ok) {
+      const msg = body.message || 'Gagal mengambil hasil.';
+      const code = body.error_code || 'UNKNOWN';
+      showError(`${msg} (${code})`);
+      btnSubmit.disabled = false;
+      return;
     }
-  };
-}
 
-// ─── Event handler ────────────────────────────────────────────────────────────
-function handleEvent(ev) {
-  state.eventCount++;
-  updateProgress();
+    if (body.status === 'progress') {
+      bumpProgress();
+      state.pollTimer = setTimeout(pollResult, POLL_INTERVAL_MS);
+      return;
+    }
 
-  switch (ev.type) {
-    case 'status':
-      addLogEntry({ kind: 'status', author: 'System', text: ev.message });
-      setProgressStatus(ev.message, null);
-      break;
+    if (body.status === 'fail') {
+      addLogEntry({ kind: 'error', author: 'System', text: body.message });
+      showError(body.message || 'Verifikasi gagal.');
+      btnSubmit.disabled = false;
+      return;
+    }
 
-    case 'agent_event':
-      handleAgentEvent(ev);
-      break;
-
-    case 'complete':
+    if (body.status === 'success') {
       setProgressStatus('Verifikasi selesai!', 100);
       progressCard.querySelector('.progress-spinner').style.display = 'none';
-      addLogEntry({ kind: 'done', author: 'System', text: 'Verifikasi selesai.' });
-      if (state.eventSource) { state.eventSource.close(); state.eventSource = null; }
-      if (ev.result) renderResult(ev.result);
+      addLogEntry({ kind: 'done', author: 'System', text: 'Ekstraksi berhasil.' });
+      renderResult(body.data || {});
       btnSubmit.disabled = false;
-      break;
-
-    case 'error':
-      setProgressStatus('Terjadi kesalahan.', null);
-      addLogEntry({ kind: 'error', author: 'System', text: ev.message });
-      if (state.eventSource) { state.eventSource.close(); state.eventSource = null; }
-      showError(ev.message);
-      btnSubmit.disabled = false;
-      break;
+    }
+  } catch (e) {
+    addLogEntry({ kind: 'error', author: 'System', text: e.message });
+    state.pollTimer = setTimeout(pollResult, POLL_INTERVAL_MS);
   }
 }
 
-function handleAgentEvent(ev) {
-  const { author, kind, tool, success, text } = ev;
-  let logText = '';
-
-  switch (kind) {
-    case 'tool_call':
-      logText = `Memanggil ${formatToolName(tool)}…`;
-      setProgressStatus(logText, null);
-      break;
-    case 'tool_result':
-      logText = success
-        ? `${formatToolName(tool)} selesai`
-        : `${formatToolName(tool)} gagal`;
-      break;
-    case 'text':
-      logText = truncate(text, 140);
-      break;
-    default:
-      logText = kind;
-  }
-
-  addLogEntry({ kind, author, text: logText });
-}
-
-// ─── Animated counter ─────────────────────────────────────────────────────────
-function animateCounter(el, target, duration = 900) {
-  const start = performance.now();
-  const tick = now => {
-    const t = Math.min((now - start) / duration, 1);
-    const ease = 1 - Math.pow(1 - t, 3);
-    el.textContent = `${Math.round(ease * target)}%`;
-    if (t < 1) requestAnimationFrame(tick);
-  };
-  requestAnimationFrame(tick);
-}
-
-// ─── Activity log ─────────────────────────────────────────────────────────────
-function addLogEntry({ kind, author, text }) {
-  const empty = activityLog.querySelector('.log-empty');
-  if (empty) empty.remove();
-
-  const agentClass = classifyAgent(author);
-  const icon = iconForKind(kind);
-  const now = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-
-  const entry = document.createElement('div');
-  entry.className = `log-entry ${agentClass}`;
-  entry.style.animationDelay = `${Math.min(state.eventCount * 30, 200)}ms`;
-  entry.innerHTML = `
-    <div class="log-dot">${icon}</div>
-    <div class="log-body">
-      <div class="log-author">${escHtml(author)}</div>
-      <div class="log-text">${escHtml(text)}</div>
-      <div class="log-time">${now}</div>
-    </div>`;
-
-  activityLog.appendChild(entry);
-  activityLog.scrollTop = activityLog.scrollHeight;
-
-  logBadge.textContent = state.eventCount;
-  logBadge.classList.remove('hidden');
+function bumpProgress() {
+  const current = parseInt(progressFill.style.width) || 15;
+  const next = Math.min(85, current + 5);
+  progressFill.style.width = `${next}%`;
+  progressPct.textContent = `${next}%`;
 }
 
 // ─── Result rendering ─────────────────────────────────────────────────────────
-function renderResult(result) {
+function renderResult(data) {
   resultPanel.classList.remove('hidden');
 
-  // Unwrap {agent_name_response: {...}} if the LLM returned a wrapped object.
-  const keys = Object.keys(result || {});
-  const data = (keys.length === 1 && keys[0].endsWith('_response') && result[keys[0]] && typeof result[keys[0]] === 'object')
-    ? result[keys[0]]
-    : result;
+  const docType = data.doc_type || 'unknown';
+  renderSummary(data, docType);
 
-  const isFlight = 'airline' in data || 'route_from' in data;
-  const isHotel  = 'hotel_name' in data || 'check_in_date' in data;
-
-  renderSummary(data, isFlight ? 'flight' : isHotel ? 'hotel' : 'unknown');
-
-  if (isFlight) renderFlightDetail(data);
-  else if (isHotel) renderHotelDetail(data);
-  else renderRawDetail(data);
+  switch (docType) {
+    case 'invoice': renderInvoiceDetail(data); break;
+    case 'receipt': renderReceiptDetail(data); break;
+    case 'unknown': renderUnknownDetail(data); break;
+    default:        renderRawDetail(data);
+  }
 
   renderAuthenticity(data.authenticity || {});
   initTabs();
-
   resultPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function renderSummary(r, docType) {
-  const auth    = r.authenticity || {};
+  const auth = r.authenticity || {};
   const verdict = verdictNormalized(auth.verdict);
   const verdictClass = resolveVerdictClass(verdict);
   const verdictEmoji = {
@@ -248,9 +182,15 @@ function renderSummary(r, docType) {
     'verdict-palsu':        '✗',
   }[verdictClass] || '?';
 
-  const total      = fmt(r.total_payment || 0, r.currency || 'IDR');
+  const total = fmt(r.total_payment || 0, r.currency || 'IDR');
   const confidence = Math.round((auth.confidence_score ?? r.extraction_confidence ?? 0) * 100);
-  const desc       = (r.summary && r.summary !== '-') ? r.summary : '';
+  const desc = (r.summary && r.summary !== '-') ? r.summary : '';
+
+  const docTypeLabel = {
+    invoice: 'INVOICE',
+    receipt: 'RECEIPT',
+    unknown: 'TIDAK TERKLASIFIKASI',
+  }[docType] || docType.toUpperCase();
 
   const manualHtml = r.requires_manual_review
     ? `<div class="manual-alert">
@@ -268,7 +208,7 @@ function renderSummary(r, docType) {
       <div class="verdict-left">
         <div class="verdict-icon-wrap">${verdictEmoji}</div>
         <div class="verdict-info">
-          <div class="verdict-label">Hasil Verifikasi</div>
+          <div class="verdict-label">Hasil Verifikasi — ${docTypeLabel}</div>
           <div class="verdict-text">${escHtml(verdict || 'TIDAK DIKETAHUI')}</div>
           ${desc ? `<div class="verdict-desc">${escHtml(desc)}</div>` : ''}
         </div>
@@ -285,7 +225,6 @@ function renderSummary(r, docType) {
       </div>
     </div>`;
 
-  // Animate confidence bar and counter after paint
   requestAnimationFrame(() => {
     const bar = document.getElementById('conf-bar');
     const pct = document.getElementById('conf-pct');
@@ -294,62 +233,65 @@ function renderSummary(r, docType) {
   });
 }
 
-function renderFlightDetail(r) {
+function renderInvoiceDetail(r) {
+  // Support BOTH the new InvoiceResult schema AND the legacy HotelInvoiceResult schema
+  // (when stage-2 routing picked hotel_agent, output uses hotel fields with doc_type=invoice).
+  const isHotelShape = 'hotel_name' in r || 'check_in_date' in r;
+
+  if (isHotelShape) {
+    return renderHotelInvoiceDetail(r);
+  }
+
+  const items = (r.line_items || []).map(it =>
+    `<div class="addon-row">
+      <span class="addon-label">${escHtml(it.description || '—')} (x${it.quantity || 0})</span>
+      <span class="addon-value">${fmt(it.subtotal, r.currency)}</span>
+    </div>`
+  ).join('');
+
   $('tab-detail').innerHTML = sections([
-    ['Informasi Booking', {
-      'No. Receipt':        r.receipt_number,
-      'No. PO':             r.po_number,
-      'Tanggal Booking':    r.booking_date,
-      'Status Transaksi':   r.transaction_status,
+    ['Informasi Invoice', {
+      'Nomor Invoice':   r.invoice_number,
+      'Tanggal Terbit':  r.issue_date,
+      'Jatuh Tempo':     r.due_date,
+      'Termin':          r.payment_terms,
     }],
-    ['Data Pemesan', {
-      'Nama':    r.traveler_name,
-      'Email':   r.traveler_email,
-      'Telepon': r.traveler_phone,
+    ['Vendor / Penjual', {
+      'Nama':    r.vendor_name,
+      'Alamat':  r.vendor_address,
+      'NPWP':    r.vendor_npwp,
+      'Telepon': r.vendor_phone,
+      'Email':   r.vendor_email,
     }],
-    ['Detail Penerbangan', {
-      'Maskapai':         r.airline,
-      'Rute':             `${r.route_from || '—'} → ${r.route_to || '—'}`,
-      'Tanggal Terbang':  r.flight_date,
-      'Kelas':            r.seat_class,
-      'Tipe Penumpang':   r.passenger_type,
+    ['Pembeli', {
+      'Nama':   r.buyer_name,
+      'Alamat': r.buyer_address,
+      'NPWP':   r.buyer_npwp,
     }],
     ['Rincian Biaya', {
-      'Harga Tiket':       fmt(r.ticket_price, r.currency),
-      'Subtotal':          fmt(r.subtotal, r.currency),
-      'Biaya Layanan':     fmt(r.service_fee, r.currency),
-      'Total Pembayaran':  fmt(r.total_payment, r.currency),
-      'Metode Pembayaran': r.payment_method,
-    }],
-    ['Provider', {
-      'Provider':    r.provider,
-      'Perusahaan':  r.provider_company,
-      'NPWP':        r.provider_npwp,
+      'Subtotal':         fmt(r.subtotal, r.currency),
+      'Diskon':           fmt(r.discount, r.currency),
+      'Pajak (PPN)':      fmt(r.tax, r.currency),
+      'Total Pembayaran': fmt(r.total_payment, r.currency),
     }],
   ]);
 
-  if (r.addons && r.addons.length) {
-    const rows = r.addons.map(a =>
-      `<div class="addon-row">
-        <span class="addon-label">${escHtml(a.description || '—')}</span>
-        <span class="addon-value">${fmt(a.price, r.currency)}</span>
-      </div>`
-    ).join('');
+  if (items) {
     $('tab-detail').innerHTML += `
       <div class="field-section">
-        <div class="field-section-title">Add-ons</div>
-        <div class="addons-list">${rows}</div>
+        <div class="field-section-title">Line Items</div>
+        <div class="addons-list">${items}</div>
       </div>`;
   }
 }
 
-function renderHotelDetail(r) {
+function renderHotelInvoiceDetail(r) {
   $('tab-detail').innerHTML = sections([
     ['Informasi Booking', {
-      'Order ID':          r.order_id,
-      'Order Detail ID':   r.order_detail_id,
-      'Tanggal Booking':   r.booking_date,
-      'Tanggal Pembayaran':r.payment_date,
+      'Order ID':           r.order_id,
+      'Order Detail ID':    r.order_detail_id,
+      'Tanggal Booking':    r.booking_date,
+      'Tanggal Pembayaran': r.payment_date,
     }],
     ['Data Pemesan', {
       'Nama':    r.booker_name,
@@ -387,17 +329,122 @@ function renderHotelDetail(r) {
   ]);
 }
 
+function renderReceiptDetail(r) {
+  // Support both new ReceiptResult and legacy FlightTicketResult shapes
+  const isFlightShape = 'airline' in r || 'route_from' in r;
+  if (isFlightShape) {
+    return renderFlightReceiptDetail(r);
+  }
+
+  const items = (r.items_purchased || []).map(it =>
+    `<div class="addon-row">
+      <span class="addon-label">${escHtml(it.description || '—')} (x${it.quantity || 0})</span>
+      <span class="addon-value">${fmt(it.price, r.currency)}</span>
+    </div>`
+  ).join('');
+
+  $('tab-detail').innerHTML = sections([
+    ['Informasi Receipt', {
+      'Nomor Receipt':    r.receipt_number,
+      'Tanggal Transaksi':r.transaction_date,
+      'Tanggal Bayar':    r.payment_date,
+    }],
+    ['Merchant', {
+      'Nama':    r.merchant_name,
+      'Alamat':  r.merchant_address,
+      'Telepon': r.merchant_phone,
+    }],
+    ['Pembayar', {
+      'Nama':    r.payer_name,
+      'Email':   r.payer_email,
+      'Telepon': r.payer_phone,
+    }],
+    ['Rincian Biaya', {
+      'Subtotal':         fmt(r.subtotal, r.currency),
+      'Pajak':            fmt(r.tax, r.currency),
+      'Biaya Layanan':    fmt(r.service_fee, r.currency),
+      'Total Pembayaran': fmt(r.total_payment, r.currency),
+      'Metode Bayar':     r.payment_method,
+      'Status Bayar':     r.payment_status,
+    }],
+  ]);
+
+  if (items) {
+    $('tab-detail').innerHTML += `
+      <div class="field-section">
+        <div class="field-section-title">Items Dibeli</div>
+        <div class="addons-list">${items}</div>
+      </div>`;
+  }
+}
+
+function renderFlightReceiptDetail(r) {
+  $('tab-detail').innerHTML = sections([
+    ['Informasi Booking', {
+      'No. Receipt':       r.receipt_number,
+      'No. PO':            r.po_number,
+      'Tanggal Booking':   r.booking_date,
+      'Status Transaksi':  r.transaction_status,
+    }],
+    ['Data Pemesan', {
+      'Nama':    r.traveler_name,
+      'Email':   r.traveler_email,
+      'Telepon': r.traveler_phone,
+    }],
+    ['Detail Penerbangan', {
+      'Maskapai':        r.airline,
+      'Rute':            `${r.route_from || '—'} → ${r.route_to || '—'}`,
+      'Tanggal Terbang': r.flight_date,
+      'Kelas':           r.seat_class,
+      'Tipe Penumpang':  r.passenger_type,
+    }],
+    ['Rincian Biaya', {
+      'Harga Tiket':       fmt(r.ticket_price, r.currency),
+      'Subtotal':          fmt(r.subtotal, r.currency),
+      'Biaya Layanan':     fmt(r.service_fee, r.currency),
+      'Total Pembayaran':  fmt(r.total_payment, r.currency),
+      'Metode Pembayaran': r.payment_method,
+    }],
+    ['Provider', {
+      'Provider':   r.provider,
+      'Perusahaan': r.provider_company,
+      'NPWP':       r.provider_npwp,
+    }],
+  ]);
+}
+
+function renderUnknownDetail(r) {
+  const reasons = (r.review_reasons || []).map(x => `<li>${escHtml(x)}</li>`).join('');
+  $('tab-detail').innerHTML = `
+    <div class="field-section">
+      <div class="field-section-title">Status Klasifikasi</div>
+      <div class="analysis-note">
+        ${escHtml(r.summary || 'Dokumen tidak terklasifikasi sebagai invoice atau receipt.')}
+      </div>
+    </div>
+    ${reasons ? `
+      <div class="field-section">
+        <div class="field-section-title">Alasan</div>
+        <ul class="evidence-list">${reasons}</ul>
+      </div>
+    ` : ''}
+    <div class="field-section">
+      <div class="field-section-title">Catatan</div>
+      <div class="analysis-note">
+        Tidak ada data ekstraksi yang dilakukan untuk dokumen ini. Authenticity tetap dianalisis berdasarkan metadata PDF (lihat tab Authenticity).
+      </div>
+    </div>`;
+}
+
 function renderRawDetail(r) {
   const entries = Object.entries(r)
-    .filter(([k]) => k !== 'authenticity')
+    .filter(([k]) => k !== 'authenticity' && k !== 'doc_type')
     .map(([k, v]) => [k, typeof v === 'object' ? JSON.stringify(v) : String(v)]);
   $('tab-detail').innerHTML = sections([['Data', Object.fromEntries(entries)]]);
 }
 
 function renderAuthenticity(auth) {
   const verdict = verdictNormalized(auth.verdict);
-
-  // ── Logic fix: is_suspicious is derived from verdict, not just the raw flag ──
   const isActuallySuspicious = auth.is_suspicious ||
     verdict.includes('MENCURIGAKAN') ||
     verdict.includes('PALSU') ||
@@ -473,7 +520,46 @@ function initTabs() {
   });
 }
 
+// ─── Activity log ─────────────────────────────────────────────────────────────
+let _logCount = 0;
+function addLogEntry({ kind, author, text }) {
+  const empty = activityLog.querySelector('.log-empty');
+  if (empty) empty.remove();
+
+  _logCount++;
+  const icon = iconForKind(kind);
+  const now = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+  const entry = document.createElement('div');
+  entry.className = `log-entry agent-system`;
+  entry.style.animationDelay = `${Math.min(_logCount * 30, 200)}ms`;
+  entry.innerHTML = `
+    <div class="log-dot">${icon}</div>
+    <div class="log-body">
+      <div class="log-author">${escHtml(author)}</div>
+      <div class="log-text">${escHtml(text)}</div>
+      <div class="log-time">${now}</div>
+    </div>`;
+
+  activityLog.appendChild(entry);
+  activityLog.scrollTop = activityLog.scrollHeight;
+
+  logBadge.textContent = _logCount;
+  logBadge.classList.remove('hidden');
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+function animateCounter(el, target, duration = 900) {
+  const start = performance.now();
+  const tick = now => {
+    const t = Math.min((now - start) / duration, 1);
+    const ease = 1 - Math.pow(1 - t, 3);
+    el.textContent = `${Math.round(ease * target)}%`;
+    if (t < 1) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
 function sections(defs) {
   return defs.map(([title, fields]) => {
     const items = Object.entries(fields).map(([label, val]) => {
@@ -495,11 +581,9 @@ function fieldItem(label, valueHtml, rawHtml = false) {
   </div>`;
 }
 
-/** Normalise verdict string: trim, uppercase, map Indonesian variants. */
 function verdictNormalized(raw) {
   if (!raw || raw === '-') return '';
   const v = String(raw).trim().toUpperCase();
-  // Map common synonyms so keyword checks stay consistent
   if (v === 'SUSPICIOUS') return 'MENCURIGAKAN';
   if (v === 'FAKE' || v === 'EDITED' || v === 'PALSU' || v.includes('DIEDIT')) return 'PALSU/DIEDIT';
   if (v === 'AUTHENTIC' || v === 'ASLI') return 'AUTENTIK';
@@ -524,14 +608,6 @@ function fmt(amount, currency = 'IDR') {
   }
 }
 
-function classifyAgent(author = '') {
-  const a = author.toLowerCase();
-  if (a.includes('coordinator') || a.includes('invoice_verification')) return 'agent-coord';
-  if (a.includes('authenticity'))                                       return 'agent-flight';
-  if (a.includes('parser') || a.includes('document'))                  return 'agent-hotel';
-  return 'agent-system';
-}
-
 function iconForKind(kind) {
   const map = {
     status:      '·',
@@ -542,14 +618,6 @@ function iconForKind(kind) {
     done:        '✓',
   };
   return map[kind] || '·';
-}
-
-function formatToolName(tool = '') {
-  return tool.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-}
-
-function truncate(str = '', max = 140) {
-  return str.length > max ? str.slice(0, max) + '…' : str;
 }
 
 function escHtml(str = '') {
@@ -568,15 +636,6 @@ function setProgressStatus(msg, pct) {
   }
 }
 
-function updateProgress() {
-  const raw     = Math.min(90, 10 + (state.eventCount / state.totalExpectedEvents) * 80);
-  const current = parseInt(progressFill.style.width) || 0;
-  if (raw > current) {
-    progressFill.style.width = `${Math.round(raw)}%`;
-    progressPct.textContent  = `${Math.round(raw)}%`;
-  }
-}
-
 function showError(msg) {
   progressStatus.textContent = `Gagal: ${msg}`;
   progressFill.style.width   = '100%';
@@ -585,21 +644,11 @@ function showError(msg) {
   if (spinner) spinner.style.display = 'none';
 }
 
-function showRejection(detail) {
-  setProgressStatus('Dokumen ditolak', 100);
-  progressFill.style.background = '#f59e0b';
-  const spinner = progressCard.querySelector('.progress-spinner');
-  if (spinner) spinner.style.display = 'none';
-  addLogEntry({ kind: 'error', author: 'System', text: detail.message });
-  if (detail.hint) addLogEntry({ kind: 'status', author: 'System', text: detail.hint });
-  btnSubmit.disabled = false;
-}
-
 function resetUI() {
-  state.eventCount = 0;
-  state.jobId      = null;
-  state.jobToken   = null;
-  if (state.eventSource) { state.eventSource.close(); state.eventSource = null; }
+  _logCount = 0;
+  state.trxId = null;
+  state.pollAttempts = 0;
+  if (state.pollTimer) { clearTimeout(state.pollTimer); state.pollTimer = null; }
 
   activityLog.innerHTML = `<div class="log-empty">
     <svg viewBox="0 0 48 48" fill="none" width="40" height="40">

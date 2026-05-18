@@ -74,9 +74,13 @@ async def test_upload_reject_oversized_file(client):
 
 
 async def test_upload_reject_missing_file(client):
-    """Request without any file field → FastAPI validation error."""
+    """Request without any file field → seragam 400 MISSING_FILE."""
     resp = await client.post("/api/pinter/upload")
-    assert resp.status_code == 422
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body["status"] == "fail"
+    assert body["error_code"] == "MISSING_FILE"
+    assert "file" in body["message"].lower() or "pdf" in body["message"].lower()
 
 
 # ── Doc-type unknown ──────────────────────────────────────────────────────

@@ -78,12 +78,6 @@ async def test_extract_expired_trx_returns_410(client):
     assert resp.json()["error_code"] == "TRX_EXPIRED"
 
 
-async def test_extract_missing_trx_id_param(client):
-    """Calling extract without trx_id query param → FastAPI 422."""
-    resp = await client.get("/api/pinter/extract")
-    assert resp.status_code == 422
-
-
 # ── Full upload → extract flow ────────────────────────────────────────────
 
 async def test_upload_then_extract_flow(client, pdf_bytes):
@@ -102,3 +96,15 @@ async def test_upload_then_extract_flow(client, pdf_bytes):
     ex = await client.get(f"/api/pinter/extract?trx_id={trx_id}")
     assert ex.status_code == 200
     assert ex.json()["status"] in ("progress", "success", "fail")
+
+
+# ── Validation error format ───────────────────────────────────────────────
+
+async def test_extract_missing_trx_id_returns_400(client):
+    """GET tanpa query trx_id → seragam 400 MISSING_TRX_ID."""
+    resp = await client.get("/api/pinter/extract")
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body["status"] == "fail"
+    assert body["error_code"] == "MISSING_TRX_ID"
+    assert "trx_id" in body["message"].lower()

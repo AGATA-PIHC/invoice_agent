@@ -7,6 +7,8 @@ from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from web.api.v1_upload import router as v1_upload_router
@@ -68,10 +70,29 @@ app.add_middleware(RequestIDMiddleware)
 
 @app.exception_handler(V1ApiError)
 async def v1_api_error_handler(request, exc: V1ApiError):
-    from fastapi.responses import JSONResponse
     return JSONResponse(
         status_code=exc.status_code,
         content=V1ErrorResponse(message=exc.message, error_code=exc.error_code).model_dump(),
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request, exc: RequestValidationError):
+    """Konversi 422 default FastAPI menjadi format seragam { status, message, error_code }."""
+    errors = exc.errors()
+    loc_paths = [tuple(e.get("loc", ())) for e in errors]
+
+    if ("body", "file") in loc_paths:
+        message, code = "File PDF wajib diisi.", "MISSING_FILE"
+    elif ("query", "trx_id") in loc_paths:
+        message, code = "Parameter trx_id wajib diisi.", "MISSING_TRX_ID"
+    else:
+        message = errors[0].get("msg") if errors else "Permintaan tidak valid."
+        code = "VALIDATION_ERROR"
+
+    return JSONResponse(
+        status_code=400,
+        content=V1ErrorResponse(message=message, error_code=code).model_dump(),
     )
 
 

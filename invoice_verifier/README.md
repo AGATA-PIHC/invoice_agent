@@ -213,7 +213,9 @@ Format response error konsisten:
 
 | Code | HTTP | Penyebab |
 |------|------|----------|
-| `MISSING_FILE` | 400 | Field `file` kosong |
+| `MISSING_FILE` | 400 | Field `file` kosong di `POST /api/pinter/upload` |
+| `MISSING_TRX_ID` | 400 | Query `trx_id` kosong di `GET /api/pinter/extract` |
+| `VALIDATION_ERROR` | 400 | Validation error lain (field type/format salah) |
 | `INVALID_FILE_TYPE` | 400 | Bukan PDF (ekstensi/magic bytes) |
 | `FILE_TOO_LARGE` | 413 | Melebihi `MAX_UPLOAD_MB` |
 | `RATE_LIMITED` | 429 | Lebih dari 10 upload/menit/IP |
