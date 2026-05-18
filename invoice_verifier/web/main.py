@@ -12,10 +12,13 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from web.api.travel import router as travel_router
+from web.api.v1_upload import router as v1_upload_router
 from web.api.verify import router as verify_router
 from web.config import IS_PRODUCTION, UPLOAD_DIR
+from web.db.sqlite import init_db
 from web.middleware import RequestIDMiddleware, SecurityHeadersMiddleware
 from web.models.responses import HealthResponse
+from web.models.v1_upload import V1ApiError, V1ErrorResponse
 from web.rate_limit import limiter
 from web.services.agent_runner import AgentRunnerService
 
@@ -42,6 +45,7 @@ _LOG_CONFIG: dict = {
 async def lifespan(app: FastAPI):
     logging.config.dictConfig(_LOG_CONFIG)
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    await init_db()
 
     runner_service = AgentRunnerService()
     app.state.runner_service = runner_service
@@ -69,8 +73,19 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestIDMiddleware)
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+
+@app.exception_handler(V1ApiError)
+async def v1_api_error_handler(request, exc: V1ApiError):
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=V1ErrorResponse(message=exc.message, error_code=exc.error_code).model_dump(),
+    )
+
+
 app.include_router(verify_router)
 app.include_router(travel_router)
+app.include_router(v1_upload_router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["ops"])

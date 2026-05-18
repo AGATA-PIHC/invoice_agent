@@ -23,3 +23,6 @@ JOB_SECRET_KEY: str = os.getenv("JOB_SECRET_KEY") or secrets.token_hex(32)
 # API key for machine-to-machine travel integration (PISmart → PINTER).
 # If unset, auth is disabled (development only).
 TRAVEL_API_KEY: str | None = os.getenv("TRAVEL_API_KEY") or None
+
+# SQLite database path for v1 upload/extract API.
+SQLITE_DB_PATH: str = os.getenv("SQLITE_DB_PATH", str(_root / "data" / "invoice_verifier.db"))
