@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import pytest
 from web.config import MAX_UPLOAD_MB, UPLOAD_DIR
-
 
 # ── Happy path ────────────────────────────────────────────────────────────
 
@@ -83,7 +81,7 @@ async def test_upload_reject_missing_file(client):
 
 # ── Doc-type unknown ──────────────────────────────────────────────────────
 
-async def test_upload_unknown_doctype_returns_progress_with_unknown_message(client, pdf_bytes, monkeypatch):
+async def test_upload_unknown_doctype_message(client, pdf_bytes, monkeypatch):
     """When doc_type is unknown the response still returns 200 with doc_type='unknown' message."""
     monkeypatch.setattr("web.api.v1_upload.classify_document", lambda fn, fp: "unknown")
 
