@@ -8,18 +8,13 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from slowapi import _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
 
-from web.api.travel import router as travel_router
 from web.api.v1_upload import router as v1_upload_router
-from web.api.verify import router as verify_router
 from web.config import IS_PRODUCTION, UPLOAD_DIR
 from web.db.sqlite import init_db
 from web.middleware import RequestIDMiddleware, SecurityHeadersMiddleware
 from web.models.responses import HealthResponse
 from web.models.v1_upload import V1ApiError, V1ErrorResponse
-from web.rate_limit import limiter
 from web.services.agent_runner import AgentRunnerService
 
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -49,8 +44,6 @@ async def lifespan(app: FastAPI):
 
     runner_service = AgentRunnerService()
     app.state.runner_service = runner_service
-    app.state.limiter = limiter
-
     eviction_task = asyncio.create_task(runner_service.eviction_loop())
     try:
         yield
@@ -71,7 +64,6 @@ app = FastAPI(
 
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestIDMiddleware)
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 @app.exception_handler(V1ApiError)
@@ -83,8 +75,6 @@ async def v1_api_error_handler(request, exc: V1ApiError):
     )
 
 
-app.include_router(verify_router)
-app.include_router(travel_router)
 app.include_router(v1_upload_router)
 
 

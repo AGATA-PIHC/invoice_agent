@@ -55,6 +55,7 @@ SOFTWARE_LABELS: dict[str, str] = {
     "phantom pdf": "PhantomPDF (software edit PDF)",
     "pdffiller": "PDFfiller (tool online edit PDF)",
     "pdf-xchange": "PDF-XChange Editor (software edit PDF)",
+    "itext": "iText (library pemrosesan PDF programatik)",
 }
 
 CONFIDENCE_DEDUCTIONS: dict[str, float] = {
