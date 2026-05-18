@@ -1,47 +1,108 @@
 from __future__ import annotations
 
-import uuid
+# ── Stub heavy optional dependencies before any web.* import ──────────────
+import sys
+import os
+import tempfile
+from unittest.mock import MagicMock
+
+_STUB_MODS = [
+    "fitz",
+    "google", "google.adk", "google.adk.runners", "google.adk.sessions",
+    "google.genai", "google.genai.types",
+    "baca_invoice", "baca_invoice.agent",
+    "baca_invoice.agents", "baca_invoice.agents.flight", "baca_invoice.agents.hotel",
+    "baca_invoice.tools", "baca_invoice.tools.constants",
+]
+for _name in _STUB_MODS:
+    sys.modules.setdefault(_name, MagicMock())
+
+# Set env vars BEFORE web.config is imported so Path values are correct.
+_tmp_upload = tempfile.mkdtemp(prefix="pinter_test_uploads_")
+_tmp_db_fd, _tmp_db_path = tempfile.mkstemp(suffix=".db", prefix="pinter_test_")
+os.close(_tmp_db_fd)
+os.environ.setdefault("UPLOAD_DIR", _tmp_upload)
+os.environ.setdefault("SQLITE_DB_PATH", _tmp_db_path)
+os.environ.setdefault("APP_ENV", "development")
+
+# ── Regular imports after stubs are in place ──────────────────────────────
+import asyncio
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-
-@pytest.fixture(autouse=True)
-def isolate_rate_limit():
-    """Give each test a unique rate-limit key so tests don't share counters."""
-    import web.rate_limit as rl
-    rl._test_key_override = str(uuid.uuid4())
-    yield
-    rl._test_key_override = None
+from web.services.agent_runner import Job, JobStatus
 
 
-@pytest.fixture(autouse=True)
-def stub_run_job(monkeypatch):
-    # Background task would call Gemini (no API key in CI) and its finally
-    # block deletes the upload dir, racing with assertions on the file.
-    async def _noop(self, job_id: str) -> None:
-        return
+# ── Mock runner service (avoids real AI calls) ─────────────────────────────
+class MockRunnerService:
+    """Synchronous stub for AgentRunnerService — no ADK/Gemini calls."""
 
-    from web.services.agent_runner import AgentRunnerService
-    monkeypatch.setattr(AgentRunnerService, "run_job", _noop)
+    active_job_count = 0
+
+    def __init__(self):
+        self._jobs: dict[str, Job] = {}
+
+    def create_job(self, job_id: str, file_path: str, filename: str, doc_type: str = "hotel"):
+        self._jobs[job_id] = Job(
+            job_id=job_id, filename=filename, file_path=file_path, doc_type=doc_type
+        )
+
+    def get_job(self, job_id: str) -> Job | None:
+        return self._jobs.get(job_id)
+
+    async def run_job(self, job_id: str) -> None:
+        job = self._jobs.get(job_id)
+        if job:
+            job.status = JobStatus.DONE
+            job.result = {"verdict": "AUTENTIK", "summary": "Test OK", "total_payment": 0.0}
+            job.push({"type": "complete", "result": job.result})
+
+    async def eviction_loop(self) -> None:
+        await asyncio.sleep(86400)
 
 
-@pytest.fixture(autouse=True)
-def stub_classify_document(monkeypatch):
-    # Minimal test PDFs have no travel keywords, so classify_document always
-    # returns "unknown" and the upload endpoint rejects them with 422.
-    from web.api import verify
-    monkeypatch.setattr(verify, "classify_document", lambda filename, file_path: "flight")
+# ── Session-scoped DB init ─────────────────────────────────────────────────
+@pytest.fixture(scope="session", autouse=True)
+async def _init_db():
+    from web.db.sqlite import init_db
+    await init_db()
+
+
+# ── Per-test fixtures ──────────────────────────────────────────────────────
+@pytest.fixture
+def mock_runner():
+    return MockRunnerService()
 
 
 @pytest.fixture
-async def client():
-    """Async test client that starts the full app lifespan."""
+def stub_classify(monkeypatch):
+    """Make classify_document always return 'flight' so minimal test PDFs pass."""
+    monkeypatch.setattr("web.api.v1_upload.classify_document", lambda fn, fp: "flight")
+
+
+@pytest.fixture(autouse=True)
+def clear_rate_limiter():
+    """Reset the in-process rate-limit counters between tests."""
+    import web.api.v1_upload as m
+    m._ip_timestamps.clear()
+    yield
+    m._ip_timestamps.clear()
+
+
+@pytest.fixture
+async def client(mock_runner, stub_classify):
+    """Async HTTPX client backed by the FastAPI app with a mock runner service."""
     from web.main import app
+    from web.dependencies import get_runner_service
+
+    app.state.runner_service = mock_runner
+    app.dependency_overrides[get_runner_service] = lambda: mock_runner
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-        async with app.router.lifespan_context(app):
-            yield c
+        yield c
+
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture
@@ -50,11 +111,11 @@ def pdf_bytes() -> bytes:
 
 
 @pytest.fixture
-async def uploaded_job(client, pdf_bytes):
-    """Upload a minimal PDF and return {job_id, token, filename}."""
+async def uploaded_trx(client, pdf_bytes) -> str:
+    """Upload a minimal PDF and return trx_id."""
     resp = await client.post(
-        "/api/verify/upload",
-        files={"file": ("test.pdf", pdf_bytes, "application/pdf")},
+        "/api/pinter/upload",
+        files={"file": ("invoice.pdf", pdf_bytes, "application/pdf")},
     )
     assert resp.status_code == 200
-    return resp.json()
+    return resp.json()["trx_id"]

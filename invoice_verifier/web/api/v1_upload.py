@@ -6,7 +6,7 @@ import shutil
 import time
 import uuid
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Security, UploadFile
@@ -222,6 +222,6 @@ def _is_expired(created_at: str | None) -> bool:
     except ValueError:
         return False
     if created.tzinfo is None:
-        created = created.replace(tzinfo=datetime.UTC)
-    age = datetime.now(datetime.UTC) - created
+        created = created.replace(tzinfo=timezone.utc)
+    age = datetime.now(timezone.utc) - created
     return age > timedelta(days=PINTER_TRX_TTL_DAYS)
