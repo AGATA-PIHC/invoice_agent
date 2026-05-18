@@ -33,6 +33,21 @@ async def init_db() -> None:
         await db.executescript(_DDL)
         await db.commit()
     logger.info("SQLite DB initialized at %s", _DB_PATH)
+    await _recover_stale_jobs()
+
+
+async def _recover_stale_jobs() -> None:
+    """Mark jobs that were left in 'progress' from a previous process as failed."""
+    now = datetime.now(datetime.UTC).isoformat()
+    async with aiosqlite.connect(_DB_PATH) as db:
+        result = await db.execute(
+            "UPDATE upload_jobs SET status='fail', updated_at=?, error_message=?"
+            " WHERE status='progress'",
+            (now, "Proses terputus akibat server restart."),
+        )
+        await db.commit()
+        if result.rowcount:
+            logger.warning("Recovered %d stale progress job(s) on startup", result.rowcount)
 
 
 async def create_job(trx_id: str, filename: str) -> None:

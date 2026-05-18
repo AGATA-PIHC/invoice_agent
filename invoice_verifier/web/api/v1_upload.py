@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
+import time
 import uuid
+from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Security, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request, Security, UploadFile
 from fastapi import File as FastAPIFile
 from fastapi.security import APIKeyHeader
 
@@ -20,6 +22,23 @@ from web.services.agent_runner import JobStatus, classify_document
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/pinter", tags=["pinter"])
+
+_background_tasks: set[asyncio.Task] = set()
+
+# Simple sliding-window rate limiter: max 10 upload requests per IP per minute.
+_RATE_LIMIT = 10
+_RATE_WINDOW = 60.0
+_ip_timestamps: dict[str, list[float]] = defaultdict(list)
+
+
+def _check_rate_limit(request: Request) -> None:
+    ip = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    timestamps = _ip_timestamps[ip]
+    _ip_timestamps[ip] = [t for t in timestamps if now - t < _RATE_WINDOW]
+    if len(_ip_timestamps[ip]) >= _RATE_LIMIT:
+        raise V1ApiError(429, "Terlalu banyak permintaan. Coba lagi dalam 1 menit.", "RATE_LIMITED")
+    _ip_timestamps[ip].append(now)
 
 _MAX_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 
@@ -44,10 +63,12 @@ def _verify_api_key(api_key: str | None = Security(_api_key_header)) -> None:
     ),
 )
 async def upload_document(
+    request: Request,
     file: UploadFile = FastAPIFile(...),
     runner_service=Depends(get_runner_service),
     _: None = Depends(_verify_api_key),
 ) -> UploadResponse:
+    _check_rate_limit(request)
     if not file.filename:
         raise V1ApiError(400, "Field 'file' wajib diisi.", "MISSING_FILE")
 
@@ -86,7 +107,8 @@ async def upload_document(
         ) from e
 
     doc_type = classify_document(filename, str(dest_path.resolve()))
-    if doc_type == "unknown":
+    doc_type_unknown = doc_type == "unknown"
+    if doc_type_unknown:
         doc_type = "hotel"
 
     try:
@@ -98,6 +120,9 @@ async def upload_document(
             500, "Terjadi kesalahan internal. Silakan coba lagi.", "INTERNAL_ERROR"
         ) from e
 
+    if doc_type_unknown:
+        logger.warning("trx %s: doc_type tidak dikenali, fallback ke 'hotel'", trx_id)
+
     runner_service.create_job(
         job_id=trx_id,
         file_path=str(dest_path.resolve()),
@@ -105,12 +130,19 @@ async def upload_document(
         doc_type=doc_type,
     )
 
-    asyncio.create_task(_run_and_persist(trx_id, runner_service))
+    task = asyncio.create_task(_run_and_persist(trx_id, runner_service))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
     return UploadResponse(
         trx_id=trx_id,
         status="progress",
-        message="Dokumen diterima dan sedang diproses.",
+        message=(
+            "Dokumen diterima dan sedang diproses. "
+            "Jenis dokumen tidak terdeteksi, diproses sebagai invoice hotel."
+            if doc_type_unknown else
+            "Dokumen diterima dan sedang diproses."
+        ),
     )
 
 
