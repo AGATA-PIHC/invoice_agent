@@ -24,5 +24,11 @@ JOB_SECRET_KEY: str = os.getenv("JOB_SECRET_KEY") or secrets.token_hex(32)
 # If unset, auth is disabled (development only).
 TRAVEL_API_KEY: str | None = os.getenv("TRAVEL_API_KEY") or None
 
-# SQLite database path for v1 upload/extract API.
+# SQLite database path for PINTER upload/extract API.
 SQLITE_DB_PATH: str = os.getenv("SQLITE_DB_PATH", str(_root / "data" / "invoice_verifier.db"))
+
+# API key for PINTER endpoints (X-API-Key header). Unset = auth disabled (dev only).
+PINTER_API_KEY: str | None = os.getenv("PINTER_API_KEY") or None
+
+# Time-to-live for trx_id in PINTER endpoints. After this, GET /extract returns TRX_EXPIRED.
+PINTER_TRX_TTL_DAYS: int = int(os.getenv("PINTER_TRX_TTL_DAYS", "7"))

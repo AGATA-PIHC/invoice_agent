@@ -283,14 +283,21 @@ Poll hasil verifikasi. Ulangi hingga `status` bukan `"processing"`.
 
 ---
 
-## API v1 — PISmart Integration (Upload & Extract)
+## PINTER API — PISmart Integration (Upload & Extract)
 
 Endpoint machine-to-machine antara **PISmart (A)** dan **PINTER (B)**.
 Hasil ekstraksi disimpan persisten di **SQLite** — tersedia meski server restart.
 
-### POST /api/v1/upload
+### Authentication
+
+Set header `X-API-Key: <key>` pada setiap request ke `/api/pinter/`.
+Konfigurasi key via env var `PINTER_API_KEY`. Jika tidak diset, auth dinonaktifkan (development only).
+
+### POST /api/pinter/upload
 
 Upload file PDF invoice/receipt untuk diekstraksi.
+
+**Headers:** `X-API-Key: <key>`
 
 **Request:** `multipart/form-data`
 
@@ -303,13 +310,21 @@ Upload file PDF invoice/receipt untuk diekstraksi.
 { "trx_id": "uuid", "status": "progress", "message": "Dokumen diterima dan sedang diproses." }
 ```
 
-**Error codes:** `400` file tidak valid / bukan PDF, `413` file terlalu besar, `500` internal error
+**Error codes:** `400` file tidak valid / bukan PDF, `401` API key salah, `413` file terlalu besar, `500` internal error
 
 ---
 
-### GET /api/v1/extract/{trx_id}
+### GET /api/pinter/extract?trx_id={trx_id}
 
 Poll hasil ekstraksi. Ulangi hingga `status` bukan `"progress"`.
+
+**Headers:** `X-API-Key: <key>`
+
+**Query parameter:**
+
+| Param | Tipe | Keterangan |
+|-------|------|-----------|
+| `trx_id` | string (UUID) | ID transaksi dari response `POST /upload` |
 
 **Response 200 (progress):**
 ```json
@@ -331,9 +346,9 @@ Poll hasil ekstraksi. Ulangi hingga `status` bukan `"progress"`.
 { "trx_id": "uuid", "status": "fail", "message": "Ekstraksi gagal: ...", "data": null }
 ```
 
-**Error codes:** `404` trx_id tidak ditemukan, `500` internal error
+**Error codes:** `401` API key salah, `404` trx_id tidak ditemukan, `410` trx_id kedaluwarsa, `500` internal error
 
-### Format Error Konsisten (semua endpoint /api/v1/)
+### Format Error Konsisten (semua endpoint /api/pinter/)
 
 ```json
 { "status": "fail", "message": "pesan human-readable", "error_code": "MACHINE_READABLE_CODE" }
@@ -345,14 +360,17 @@ Poll hasil ekstraksi. Ulangi hingga `status` bukan `"progress"`.
 | `INVALID_FILE_TYPE` | 400 | Bukan PDF |
 | `FILE_TOO_LARGE` | 413 | Melebihi batas ukuran |
 | `TRX_NOT_FOUND` | 404 | trx_id tidak dikenal |
+| `TRX_EXPIRED` | 410 | trx_id melewati TTL (default 7 hari) |
 | `INTERNAL_ERROR` | 500 | Error internal server |
 
-### Catatan Desain v1
+### Catatan Desain PINTER
 
+- **Auth**: `X-API-Key` header (konfigurasi via `PINTER_API_KEY`). Jika env var tidak diset, auth bypass (dev only).
 - **Persistent**: Hasil disimpan di SQLite (`SQLITE_DB_PATH`) — tersedia meski server restart.
 - **Non-blocking**: POST /upload langsung return `trx_id`, proses berjalan di background.
 - **Data lengkap**: Field `data` berisi seluruh output JSON dari AI agent tanpa disaring.
-- **Polling interval**: Disarankan poll setiap 3–5 detik.
+- **Polling interval**: Disarankan poll setiap 3–5 detik. Timeout praktis: 60 detik (job rata-rata 10–30 detik).
+- **TTL trx_id**: Default 7 hari (`PINTER_TRX_TTL_DAYS`). Setelah lewat, GET extract return `TRX_EXPIRED` (HTTP 410).
 
 ---
 

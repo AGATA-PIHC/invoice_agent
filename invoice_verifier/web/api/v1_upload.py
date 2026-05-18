@@ -4,12 +4,14 @@ import asyncio
 import logging
 import shutil
 import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Security, UploadFile
 from fastapi import File as FastAPIFile
+from fastapi.security import APIKeyHeader
 
-from web.config import MAX_UPLOAD_MB, UPLOAD_DIR
+from web.config import MAX_UPLOAD_MB, PINTER_API_KEY, PINTER_TRX_TTL_DAYS, UPLOAD_DIR
 from web.db.sqlite import create_job, get_job, update_job
 from web.dependencies import get_runner_service
 from web.models.v1_upload import ExtractResponse, UploadResponse, V1ApiError
@@ -17,9 +19,18 @@ from web.services.agent_runner import JobStatus, classify_document
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1", tags=["v1"])
+router = APIRouter(prefix="/api/pinter", tags=["pinter"])
 
 _MAX_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+
+_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+def _verify_api_key(api_key: str | None = Security(_api_key_header)) -> None:
+    if not PINTER_API_KEY:
+        return
+    if not api_key or api_key != PINTER_API_KEY:
+        raise HTTPException(status_code=401, detail="X-API-Key tidak valid atau tidak ada.")
 
 
 @router.post(
@@ -29,12 +40,13 @@ _MAX_BYTES = MAX_UPLOAD_MB * 1024 * 1024
     description=(
         "PISmart mengirim file PDF via multipart/form-data. "
         "Response langsung mengembalikan trx_id — proses ekstraksi berjalan di background. "
-        "Gunakan GET /api/v1/extract/{trx_id} untuk mengambil hasil."
+        "Gunakan GET /api/pinter/extract?trx_id={trx_id} untuk mengambil hasil."
     ),
 )
 async def upload_document(
     file: UploadFile = FastAPIFile(...),
     runner_service=Depends(get_runner_service),
+    _: None = Depends(_verify_api_key),
 ) -> UploadResponse:
     if not file.filename:
         raise V1ApiError(400, "Field 'file' wajib diisi.", "MISSING_FILE")
@@ -117,17 +129,21 @@ async def _run_and_persist(trx_id: str, runner_service) -> None:
 
 
 @router.get(
-    "/extract/{trx_id}",
+    "/extract",
     response_model=ExtractResponse,
-    summary="Ambil hasil ekstraksi berdasarkan trx_id",
+    summary="Ambil hasil ekstraksi berdasarkan trx_id (query param)",
     description=(
         "Poll endpoint ini setelah POST /upload. "
         "status='progress' artinya masih berjalan. "
         "status='success' artinya data hasil ekstraksi tersedia di field 'data'. "
-        "status='fail' artinya ekstraksi gagal."
+        "status='fail' artinya ekstraksi gagal. "
+        f"trx_id kedaluwarsa setelah {PINTER_TRX_TTL_DAYS} hari (error TRX_EXPIRED)."
     ),
 )
-async def get_extract(trx_id: str) -> ExtractResponse:
+async def get_extract(
+    trx_id: str,
+    _: None = Depends(_verify_api_key),
+) -> ExtractResponse:
     try:
         record = await get_job(trx_id)
     except Exception as e:
@@ -136,6 +152,9 @@ async def get_extract(trx_id: str) -> ExtractResponse:
 
     if record is None:
         raise V1ApiError(404, "Transaction ID tidak ditemukan.", "TRX_NOT_FOUND")
+
+    if _is_expired(record.get("created_at")):
+        raise V1ApiError(410, "Transaction ID sudah kedaluwarsa.", "TRX_EXPIRED")
 
     status = record["status"]
 
@@ -161,3 +180,16 @@ async def get_extract(trx_id: str) -> ExtractResponse:
         message="Ekstraksi berhasil.",
         data=record.get("result_json"),
     )
+
+
+def _is_expired(created_at: str | None) -> bool:
+    if not created_at:
+        return False
+    try:
+        created = datetime.fromisoformat(created_at)
+    except ValueError:
+        return False
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=datetime.UTC)
+    age = datetime.now(datetime.UTC) - created
+    return age > timedelta(days=PINTER_TRX_TTL_DAYS)
