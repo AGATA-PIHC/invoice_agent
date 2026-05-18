@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import os
+
 # ── Stub heavy optional dependencies before any web.* import ──────────────
 import sys
-import os
 import tempfile
 from unittest.mock import MagicMock
 
@@ -33,12 +34,11 @@ os.environ.setdefault("SQLITE_DB_PATH", _tmp_db_path)
 os.environ.setdefault("APP_ENV", "development")
 
 # ── Regular imports after stubs are in place ──────────────────────────────
-import asyncio
+import asyncio  # noqa: E402
 
-import pytest
-from httpx import ASGITransport, AsyncClient
-
-from web.services.agent_runner import Job, JobStatus
+import pytest  # noqa: E402
+from httpx import ASGITransport, AsyncClient  # noqa: E402
+from web.services.agent_runner import Job, JobStatus  # noqa: E402
 
 
 # ── Mock runner service (avoids real AI calls) ─────────────────────────────
@@ -109,8 +109,8 @@ def clear_rate_limiter():
 @pytest.fixture
 async def client(mock_runner, stub_classify):
     """Async HTTPX client backed by the FastAPI app with a mock runner service."""
-    from web.main import app
     from web.dependencies import get_runner_service
+    from web.main import app
 
     app.state.runner_service = mock_runner
     app.dependency_overrides[get_runner_service] = lambda: mock_runner
