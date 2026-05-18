@@ -15,8 +15,8 @@ Mendukung integrasi mesin-ke-mesin dengan sistem eksternal (PISmart).
 | `GET /api/verify/{job_id}/result` | Ambil hasil akhir verifikasi |
 | `POST /api/travel/submit` | Integrasi PISmart: kirim dokumen PDF (base64) |
 | `GET /api/travel/result/{transaction_id}` | Integrasi PISmart: poll hasil verifikasi |
-| `POST /api/v1/upload` | Upload PDF invoice → terima `trx_id`, simpan ke SQLite |
-| `GET /api/v1/extract/{trx_id}` | Poll hasil ekstraksi dari SQLite |
+| `POST /api/pinter/upload` | Upload PDF invoice → terima `trx_id`, simpan ke SQLite |
+| `GET /api/pinter/extract?trx_id={trx_id}` | Poll hasil ekstraksi dari SQLite |
 | `GET /health` | Liveness check |
 
 Dokumentasi lengkap: [`web/API.md`](web/API.md)
@@ -33,7 +33,7 @@ Dokumentasi lengkap: [`web/API.md`](web/API.md)
                            │
           ┌────────────────┼────────────────┐
           │                │                │
-   /api/verify/    /api/travel/      /api/v1/
+   /api/verify/    /api/travel/    /api/pinter/
    (SSE stream)    (base64 JSON)   (multipart PDF)
           │                │                │
           └────────────────┼────────────────┘
@@ -52,7 +52,7 @@ Dokumentasi lengkap: [`web/API.md`](web/API.md)
               │                       │
          in-memory              SQLite DB
       (_travel_meta)          (upload_jobs)
-     [/api/travel/]          [/api/v1/]
+     [/api/travel/]          [/api/pinter/]
 ```
 
 ---
@@ -78,7 +78,9 @@ cp baca_invoice/.env_example baca_invoice/.env
 | `GOOGLE_API_KEY` | API key Google AI Studio | — (wajib) |
 | `GOOGLE_GENAI_USE_VERTEXAI` | `1` untuk Vertex AI, `0` untuk AI Studio | `0` |
 | `TRAVEL_API_KEY` | API key untuk endpoint `/api/travel/` | — (opsional, nonaktif jika tidak diset) |
-| `SQLITE_DB_PATH` | Path file SQLite untuk endpoint `/api/v1/` | `data/invoice_verifier.db` |
+| `PINTER_API_KEY` | API key untuk endpoint `/api/pinter/` (header `X-API-Key`) | — (opsional, nonaktif jika tidak diset) |
+| `PINTER_TRX_TTL_DAYS` | TTL trx_id dalam hari (setelah lewat → `TRX_EXPIRED`) | `7` |
+| `SQLITE_DB_PATH` | Path file SQLite untuk endpoint `/api/pinter/` | `data/invoice_verifier.db` |
 | `JOB_SECRET_KEY` | Secret untuk HMAC token job (persist antar restart) | auto-generate |
 
 ---
@@ -138,45 +140,55 @@ curl "http://localhost:8080/api/travel/result/{transaction_id}" \
   -H "X-API-Key: your_key"
 ```
 
-### API v1 — Upload & Extract (SQLite Persistent)
+### PINTER API — Upload & Extract (SQLite Persistent)
 
 ```sh
 # 1. Upload PDF
-curl -X POST http://localhost:8080/api/v1/upload \
+curl -X POST http://localhost:8080/api/pinter/upload \
+  -H "X-API-Key: your_key" \
   -F "file=@invoice.pdf"
 # → { "trx_id": "uuid", "status": "progress", "message": "..." }
 
 # 2. Poll hasil (ulangi sampai status bukan "progress")
-curl "http://localhost:8080/api/v1/extract/{trx_id}"
+curl "http://localhost:8080/api/pinter/extract?trx_id={trx_id}" \
+  -H "X-API-Key: your_key"
 # → { "trx_id": "...", "status": "success", "message": "...", "data": { ... } }
 ```
 
-**Keunggulan API v1 vs `/api/travel/`**: hasil tersimpan di SQLite sehingga tetap tersedia meski server restart.
+**Keunggulan PINTER API vs `/api/travel/`**: hasil tersimpan di SQLite sehingga tetap tersedia meski server restart.
 
 ---
 
 ## Pembaruan Terkini
 
-### v1.1 — API v1 Upload & Extract (branch: `002-upload-extract-api`)
+### v1.1 — PINTER API Upload & Extract (branch: `002-upload-extract-api`)
 
 Menambahkan dua endpoint baru untuk integrasi PISmart → PINTER dengan penyimpanan persisten:
 
+**Endpoint:**
+- `POST /api/pinter/upload` — terima PDF multipart, return `trx_id` langsung
+- `GET /api/pinter/extract?trx_id={trx_id}` — poll hasil ekstraksi dari SQLite
+- Autentikasi via header `X-API-Key` (env var `PINTER_API_KEY`)
+- TTL trx_id default 7 hari (env var `PINTER_TRX_TTL_DAYS`)
+
 **File baru:**
-- [`web/api/v1_upload.py`](web/api/v1_upload.py) — router `POST /api/v1/upload` dan `GET /api/v1/extract/{trx_id}`
+- [`web/api/v1_upload.py`](web/api/v1_upload.py) — router PINTER dengan dependency auth + TTL check
 - [`web/models/v1_upload.py`](web/models/v1_upload.py) — Pydantic models + custom exception `V1ApiError`
 - [`web/db/sqlite.py`](web/db/sqlite.py) — async SQLite layer (`init_db`, `create_job`, `get_job`, `update_job`)
 - [`web/db/__init__.py`](web/db/__init__.py) — package marker
 
 **File diupdate:**
-- [`web/main.py`](web/main.py) — registrasi router v1, inisialisasi SQLite saat startup, centralized error handler
-- [`web/config.py`](web/config.py) — env var `SQLITE_DB_PATH`
-- [`web/API.md`](web/API.md) — dokumentasi endpoint v1
+- [`web/main.py`](web/main.py) — registrasi router, inisialisasi SQLite saat startup, centralized error handler
+- [`web/config.py`](web/config.py) — env var `SQLITE_DB_PATH`, `PINTER_API_KEY`, `PINTER_TRX_TTL_DAYS`
+- [`web/API.md`](web/API.md) — dokumentasi endpoint PINTER
 - `requirements.txt` — tambah `aiosqlite>=0.19.0`
 
-**Format error konsisten** di semua endpoint `/api/v1/`:
+**Format error konsisten** di semua endpoint `/api/pinter/`:
 ```json
 { "status": "fail", "message": "...", "error_code": "MACHINE_READABLE_CODE" }
 ```
+
+Error codes: `MISSING_FILE`, `INVALID_FILE_TYPE`, `FILE_TOO_LARGE`, `TRX_NOT_FOUND`, `TRX_EXPIRED`, `INTERNAL_ERROR`.
 
 ---
 
@@ -251,7 +263,7 @@ invoice_verifier/          ← git root
 │   ├── api/
 │   │   ├── verify.py      ← /api/verify/
 │   │   ├── travel.py      ← /api/travel/
-│   │   └── v1_upload.py   ← /api/v1/
+│   │   └── v1_upload.py   ← /api/pinter/
 │   ├── db/
 │   │   └── sqlite.py      ← async SQLite layer
 │   ├── models/
