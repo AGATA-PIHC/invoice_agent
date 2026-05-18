@@ -69,7 +69,9 @@ async def upload_document(
     except OSError as e:
         shutil.rmtree(dest_dir, ignore_errors=True)
         logger.error("Gagal tulis file untuk trx %s: %s", trx_id, e)
-        raise V1ApiError(500, "Terjadi kesalahan internal. Silakan coba lagi.", "INTERNAL_ERROR")
+        raise V1ApiError(
+            500, "Terjadi kesalahan internal. Silakan coba lagi.", "INTERNAL_ERROR"
+        ) from e
 
     doc_type = classify_document(filename, str(dest_path.resolve()))
     if doc_type == "unknown":
@@ -80,7 +82,9 @@ async def upload_document(
     except Exception as e:
         shutil.rmtree(dest_dir, ignore_errors=True)
         logger.error("Gagal simpan job ke DB untuk trx %s: %s", trx_id, e)
-        raise V1ApiError(500, "Terjadi kesalahan internal. Silakan coba lagi.", "INTERNAL_ERROR")
+        raise V1ApiError(
+            500, "Terjadi kesalahan internal. Silakan coba lagi.", "INTERNAL_ERROR"
+        ) from e
 
     runner_service.create_job(
         job_id=trx_id,
@@ -128,7 +132,7 @@ async def get_extract(trx_id: str) -> ExtractResponse:
         record = await get_job(trx_id)
     except Exception as e:
         logger.error("Gagal baca DB untuk trx %s: %s", trx_id, e)
-        raise V1ApiError(500, "Terjadi kesalahan internal.", "INTERNAL_ERROR")
+        raise V1ApiError(500, "Terjadi kesalahan internal.", "INTERNAL_ERROR") from e
 
     if record is None:
         raise V1ApiError(404, "Transaction ID tidak ditemukan.", "TRX_NOT_FOUND")

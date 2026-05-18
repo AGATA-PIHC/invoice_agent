@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 import aiosqlite
@@ -36,7 +36,7 @@ async def init_db() -> None:
 
 
 async def create_job(trx_id: str, filename: str) -> None:
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(datetime.UTC).isoformat()
     async with aiosqlite.connect(_DB_PATH) as db:
         await db.execute(
             "INSERT INTO upload_jobs (trx_id, status, filename, created_at, updated_at)"
@@ -72,7 +72,7 @@ async def update_job(
     result_json: dict | None = None,
     error_message: str | None = None,
 ) -> None:
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(datetime.UTC).isoformat()
     result_str = json.dumps(result_json) if result_json is not None else None
     async with aiosqlite.connect(_DB_PATH) as db:
         await db.execute(

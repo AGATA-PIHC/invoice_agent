@@ -5,9 +5,8 @@ import base64
 import binascii
 import logging
 import shutil
-import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Security
@@ -16,7 +15,11 @@ from fastapi.security import APIKeyHeader
 
 from web.config import TRAVEL_API_KEY, UPLOAD_DIR
 from web.dependencies import get_runner_service
-from web.models.travel_contract import TravelResultResponse, TravelSubmitRequest, TravelSubmitResponse
+from web.models.travel_contract import (
+    TravelResultResponse,
+    TravelSubmitRequest,
+    TravelSubmitResponse,
+)
 from web.services.agent_runner import JobStatus, classify_document
 
 logger = logging.getLogger(__name__)
@@ -61,8 +64,8 @@ async def submit_document(
     # Decode base64
     try:
         pdf_bytes = base64.b64decode(body.file_base64, validate=True)
-    except (binascii.Error, ValueError):
-        raise HTTPException(status_code=400, detail="file_base64 bukan base64 yang valid.")
+    except (binascii.Error, ValueError) as e:
+        raise HTTPException(status_code=400, detail="file_base64 bukan base64 yang valid.") from e
 
     if len(pdf_bytes) < 5 or pdf_bytes[:4] != b"%PDF":
         raise HTTPException(status_code=400, detail="Konten bukan file PDF yang valid.")
@@ -81,7 +84,7 @@ async def submit_document(
     except OSError as e:
         shutil.rmtree(dest_dir, ignore_errors=True)
         logger.error("Gagal tulis file untuk transaction %s: %s", transaction_id, e)
-        raise HTTPException(status_code=500, detail="Gagal menyimpan file.")
+        raise HTTPException(status_code=500, detail="Gagal menyimpan file.") from e
 
     # Klasifikasi dokumen travel (flight/hotel) — tetap auto-detect dari konten PDF
     doc_type = classify_document(filename, str(dest_path.resolve()))
@@ -99,7 +102,7 @@ async def submit_document(
         doc_type=doc_type,
     )
 
-    submitted_at = datetime.now(timezone.utc)
+    submitted_at = datetime.now(datetime.UTC)
     _travel_meta[transaction_id] = {
         "reference_id": body.reference_id,
         "document_type": body.document_type,  # invoice / receipt dari PISmart
@@ -157,7 +160,7 @@ async def get_result(
             "completed_at": None,
         })
 
-    completed_at = datetime.now(timezone.utc).isoformat()
+    completed_at = datetime.now(datetime.UTC).isoformat()
 
     if job.status == JobStatus.ERROR:
         # Jangan jadi stopper — return status failed, bukan raise exception
