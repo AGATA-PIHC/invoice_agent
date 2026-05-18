@@ -281,6 +281,81 @@ Poll hasil verifikasi. Ulangi hingga `status` bukan `"processing"`.
 
 ---
 
+---
+
+## API v1 — PISmart Integration (Upload & Extract)
+
+Endpoint machine-to-machine antara **PISmart (A)** dan **PINTER (B)**.
+Hasil ekstraksi disimpan persisten di **SQLite** — tersedia meski server restart.
+
+### POST /api/v1/upload
+
+Upload file PDF invoice/receipt untuk diekstraksi.
+
+**Request:** `multipart/form-data`
+
+| Field | Tipe | Keterangan |
+|-------|------|-----------|
+| `file` | File (PDF) | File PDF, maks 20 MB |
+
+**Response 200:**
+```json
+{ "trx_id": "uuid", "status": "progress", "message": "Dokumen diterima dan sedang diproses." }
+```
+
+**Error codes:** `400` file tidak valid / bukan PDF, `413` file terlalu besar, `500` internal error
+
+---
+
+### GET /api/v1/extract/{trx_id}
+
+Poll hasil ekstraksi. Ulangi hingga `status` bukan `"progress"`.
+
+**Response 200 (progress):**
+```json
+{ "trx_id": "uuid", "status": "progress", "message": "Dokumen sedang diproses.", "data": null }
+```
+
+**Response 200 (success):**
+```json
+{
+  "trx_id": "uuid",
+  "status": "success",
+  "message": "Ekstraksi berhasil.",
+  "data": { /* seluruh JSON hasil agent — FlightTicketResult atau HotelInvoiceResult */ }
+}
+```
+
+**Response 200 (fail):**
+```json
+{ "trx_id": "uuid", "status": "fail", "message": "Ekstraksi gagal: ...", "data": null }
+```
+
+**Error codes:** `404` trx_id tidak ditemukan, `500` internal error
+
+### Format Error Konsisten (semua endpoint /api/v1/)
+
+```json
+{ "status": "fail", "message": "pesan human-readable", "error_code": "MACHINE_READABLE_CODE" }
+```
+
+| error_code | HTTP | Kondisi |
+|---|---|---|
+| `MISSING_FILE` | 400 | Field file tidak ada |
+| `INVALID_FILE_TYPE` | 400 | Bukan PDF |
+| `FILE_TOO_LARGE` | 413 | Melebihi batas ukuran |
+| `TRX_NOT_FOUND` | 404 | trx_id tidak dikenal |
+| `INTERNAL_ERROR` | 500 | Error internal server |
+
+### Catatan Desain v1
+
+- **Persistent**: Hasil disimpan di SQLite (`SQLITE_DB_PATH`) — tersedia meski server restart.
+- **Non-blocking**: POST /upload langsung return `trx_id`, proses berjalan di background.
+- **Data lengkap**: Field `data` berisi seluruh output JSON dari AI agent tanpa disaring.
+- **Polling interval**: Disarankan poll setiap 3–5 detik.
+
+---
+
 ## Known Limitations
 
 - **No persistent auth** — `JOB_SECRET_KEY` is auto-generated on startup if not set in `.env`,
