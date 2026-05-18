@@ -6,7 +6,7 @@ import shutil
 import time
 import uuid
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Security, UploadFile
@@ -126,7 +126,10 @@ async def upload_document(
         return UploadResponse(
             trx_id=trx_id,
             status="progress",
-            message="Dokumen diterima. Tidak dikenali sebagai invoice/receipt — akan dikembalikan dengan doc_type='unknown'.",
+            message=(
+                "Dokumen diterima. Tidak dikenali sebagai invoice/receipt — "
+                "akan dikembalikan dengan doc_type='unknown'."
+            ),
         )
 
     # Classifier 2 (independen): hotel / flight / None
@@ -242,6 +245,6 @@ def _is_expired(created_at: str | None) -> bool:
     except ValueError:
         return False
     if created.tzinfo is None:
-        created = created.replace(tzinfo=timezone.utc)
-    age = datetime.now(timezone.utc) - created
+        created = created.replace(tzinfo=UTC)
+    age = datetime.now(UTC) - created
     return age > timedelta(days=PINTER_TRX_TTL_DAYS)
