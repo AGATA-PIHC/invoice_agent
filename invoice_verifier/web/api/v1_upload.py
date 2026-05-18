@@ -17,7 +17,7 @@ from web.config import MAX_UPLOAD_MB, PINTER_API_KEY, PINTER_TRX_TTL_DAYS, UPLOA
 from web.db.sqlite import create_job, get_job, update_job
 from web.dependencies import get_runner_service
 from web.models.v1_upload import ExtractResponse, UploadResponse, V1ApiError
-from web.services.agent_runner import JobStatus, classify_document
+from web.services.agent_runner import JobStatus, classify_document, classify_sub_type
 
 logger = logging.getLogger(__name__)
 
@@ -106,10 +106,8 @@ async def upload_document(
             500, "Terjadi kesalahan internal. Silakan coba lagi.", "INTERNAL_ERROR"
         ) from e
 
-    doc_type = classify_document(filename, str(dest_path.resolve()))
-    doc_type_unknown = doc_type == "unknown"
-    if doc_type_unknown:
-        doc_type = "hotel"
+    resolved_path = str(dest_path.resolve())
+    doc_type = classify_document(filename, resolved_path)
 
     try:
         await create_job(trx_id, filename)
@@ -120,14 +118,27 @@ async def upload_document(
             500, "Terjadi kesalahan internal. Silakan coba lagi.", "INTERNAL_ERROR"
         ) from e
 
-    if doc_type_unknown:
-        logger.warning("trx %s: doc_type tidak dikenali, fallback ke 'hotel'", trx_id)
+    if doc_type == "unknown":
+        logger.info("trx %s: doc_type unknown — skip AI, kembalikan UnknownResult", trx_id)
+        task = asyncio.create_task(_persist_unknown(trx_id, resolved_path))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+        return UploadResponse(
+            trx_id=trx_id,
+            status="progress",
+            message="Dokumen diterima. Tidak dikenali sebagai invoice/receipt — akan dikembalikan dengan doc_type='unknown'.",
+        )
+
+    # Classifier 2 (independen): hotel / flight / None
+    sub_type = classify_sub_type(filename, resolved_path)
+    logger.info("trx %s: doc_type=%s sub_type=%s", trx_id, doc_type, sub_type)
 
     runner_service.create_job(
         job_id=trx_id,
-        file_path=str(dest_path.resolve()),
+        file_path=resolved_path,
         filename=filename,
         doc_type=doc_type,
+        sub_type=sub_type,
     )
 
     task = asyncio.create_task(_run_and_persist(trx_id, runner_service))
@@ -137,12 +148,7 @@ async def upload_document(
     return UploadResponse(
         trx_id=trx_id,
         status="progress",
-        message=(
-            "Dokumen diterima dan sedang diproses. "
-            "Jenis dokumen tidak terdeteksi, diproses sebagai invoice hotel."
-            if doc_type_unknown else
-            "Dokumen diterima dan sedang diproses."
-        ),
+        message="Dokumen diterima dan sedang diproses.",
     )
 
 
@@ -157,6 +163,20 @@ async def _run_and_persist(trx_id: str, runner_service) -> None:
             await update_job(trx_id, status="fail", error_message=error_msg)
     except Exception as exc:
         logger.exception("run_and_persist gagal untuk trx %s", trx_id)
+        await update_job(trx_id, status="fail", error_message=str(exc))
+
+
+async def _persist_unknown(trx_id: str, file_path: str) -> None:
+    try:
+        from baca_invoice.models.authenticity import DocumentAuthenticity
+        from baca_invoice.models.unknown import UnknownResult
+        from baca_invoice.tools.authenticity import analyze_document_authenticity
+
+        raw_auth = analyze_document_authenticity(file_path)
+        result = UnknownResult(authenticity=DocumentAuthenticity(**raw_auth))
+        await update_job(trx_id, status="success", result_json=result.model_dump())
+    except Exception as exc:
+        logger.exception("persist_unknown gagal untuk trx %s", trx_id)
         await update_job(trx_id, status="fail", error_message=str(exc))
 
 

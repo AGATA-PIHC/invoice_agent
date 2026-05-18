@@ -15,6 +15,9 @@ from typing import Literal
 
 from baca_invoice.agents.flight import flight_agent
 from baca_invoice.agents.hotel import hotel_agent
+from baca_invoice.agents.invoice import invoice_agent
+from baca_invoice.agents.receipt import receipt_agent
+
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types as genai_types
@@ -37,6 +40,7 @@ class Job:
     filename: str
     file_path: str
     doc_type: str = "unknown"
+    sub_type: str | None = None   # "hotel" | "flight" | None
     status: JobStatus = JobStatus.PENDING
     result: dict | None = None
     error: str | None = None
@@ -62,37 +66,37 @@ class Job:
         return cursor
 
 
-_FLIGHT_KEYWORDS = frozenset({
-    "pesawat", "flight", "tiket", "traveloka", "airasia", "garuda",
-    "lion", "airline", "boarding", "citilink", "batik", "wings",
+_INVOICE_KEYWORDS = frozenset({
+    "invoice", "faktur", "tagihan", "ppn", "vat", "npwp",
+    "nomor faktur", "jatuh tempo", "due date",
 })
-_HOTEL_KEYWORDS = frozenset({
-    "hotel", "penginapan", "booking", "room", "kamar", "check-in",
-    "checkin", "checkout", "inn", "resort", "malam", "nights",
+_RECEIPT_KEYWORDS = frozenset({
+    "receipt", "struk", "bukti bayar", "kwitansi", "e-tiket", "e-ticket",
+    "booking confirmation", "payment confirmation", "lunas", "paid",
 })
-_AIRLINE_PROVIDERS = frozenset({"airasia", "garuda", "lion_air", "kai"})
+_TRANSPORT_PROVIDERS = frozenset({"airasia", "garuda", "lion_air", "kai"})
 
 
-def _detect_by_provider(pdf_text: str) -> Literal["flight", "hotel", "unknown"]:
-    """Layer 3: match KNOWN_PROVIDERS keywords against pdf_text."""
+def _detect_by_provider(pdf_text: str) -> Literal["invoice", "receipt", "unknown"]:
+    """Match KNOWN_PROVIDERS keywords against pdf_text."""
     from baca_invoice.tools.constants import KNOWN_PROVIDERS
 
     for provider_name, provider_data in KNOWN_PROVIDERS.items():
         for kw in provider_data.get("keywords", []):
             if kw in pdf_text:
-                # Airline/train provider → definitively a transport ticket
-                if provider_name in _AIRLINE_PROVIDERS:
-                    return "flight"
-                # Booking platform found — default to hotel (safe fallback)
-                return "hotel"
+                # Transport/airline → receipt (bukti bayar tiket)
+                if provider_name in _TRANSPORT_PROVIDERS:
+                    return "receipt"
+                # Hotel booking platform → invoice (tagihan hotel)
+                return "invoice"
     return "unknown"
 
 
-def classify_document(filename: str, file_path: str) -> Literal["flight", "hotel", "unknown"]:
-    """Classify PDF without any LLM call. Returns 'flight', 'hotel', or 'unknown'."""
+def classify_document(filename: str, file_path: str) -> Literal["invoice", "receipt", "unknown"]:
+    """Classify PDF without any LLM call. Returns 'invoice', 'receipt', or 'unknown'."""
     name = filename.lower()
-    f_score = sum(1 for k in _FLIGHT_KEYWORDS if k in name)
-    h_score = sum(1 for k in _HOTEL_KEYWORDS if k in name)
+    inv_score = sum(1 for k in _INVOICE_KEYWORDS if k in name)
+    rec_score = sum(1 for k in _RECEIPT_KEYWORDS if k in name)
     pdf_text = ""
 
     try:
@@ -107,28 +111,63 @@ def classify_document(filename: str, file_path: str) -> Literal["flight", "hotel
     except Exception:
         logger.warning("PDF peek failed for classify_document(%s)", filename)
 
-    f_score += sum(1 for k in _FLIGHT_KEYWORDS if k in pdf_text)
-    h_score += sum(1 for k in _HOTEL_KEYWORDS if k in pdf_text)
+    inv_score += sum(1 for k in _INVOICE_KEYWORDS if k in pdf_text)
+    rec_score += sum(1 for k in _RECEIPT_KEYWORDS if k in pdf_text)
 
-    # No travel keywords at all — try provider metadata as last resort
-    if f_score == 0 and h_score == 0:
+    if inv_score == 0 and rec_score == 0:
         return _detect_by_provider(pdf_text) if pdf_text else "unknown"
 
-    # Clear winner
-    if f_score != h_score:
-        return "flight" if f_score > h_score else "hotel"
+    if inv_score != rec_score:
+        return "invoice" if inv_score > rec_score else "receipt"
 
-    # Tied with some travel keywords — use provider to break tie
     if pdf_text:
         provider_type = _detect_by_provider(pdf_text)
         if provider_type != "unknown":
             return provider_type
 
-    # Tied, travel-related — default to hotel
-    return "hotel"
+    return "unknown"
 
 
-_DOC_TYPE_LABEL = {"flight": "Tiket Pesawat", "hotel": "Invoice Hotel", "unknown": "Dokumen"}
+_HOTEL_KEYWORDS = frozenset({
+    "hotel", "penginapan", "kamar", "check-in", "checkin", "checkout",
+    "inn", "resort", "malam", "nights", "room",
+})
+_FLIGHT_KEYWORDS = frozenset({
+    "pesawat", "flight", "tiket", "airasia", "garuda", "lion",
+    "airline", "boarding", "citilink", "batik", "wings",
+})
+
+
+def classify_sub_type(filename: str, file_path: str) -> str | None:
+    """Classifier 2 (independen): cek apakah dokumen hotel atau flight.
+    Returns 'hotel', 'flight', atau None jika tidak terdeteksi."""
+    name = filename.lower()
+    h_score = sum(1 for k in _HOTEL_KEYWORDS if k in name)
+    f_score = sum(1 for k in _FLIGHT_KEYWORDS if k in name)
+    pdf_text = ""
+
+    try:
+        import fitz
+        doc = fitz.open(file_path)
+        try:
+            if doc.page_count > 0:
+                pdf_text = doc[0].get_text()[:3000].lower()
+        finally:
+            doc.close()
+    except Exception:
+        logger.warning("PDF peek failed for classify_sub_type(%s)", filename)
+
+    h_score += sum(1 for k in _HOTEL_KEYWORDS if k in pdf_text)
+    f_score += sum(1 for k in _FLIGHT_KEYWORDS if k in pdf_text)
+
+    if h_score == 0 and f_score == 0:
+        return None
+    if h_score >= f_score:
+        return "hotel"
+    return "flight"
+
+
+_DOC_TYPE_LABEL = {"invoice": "Invoice", "receipt": "Receipt", "unknown": "Dokumen"}
 
 
 def _clear_broken_local_proxy() -> None:
@@ -144,9 +183,14 @@ class AgentRunnerService:
     def __init__(self) -> None:
         _clear_broken_local_proxy()
         self._session_service = InMemorySessionService()
-        self._flight_runner = Runner(
+        self._invoice_runner = Runner(
             app_name=APP_NAME,
-            agent=flight_agent,
+            agent=invoice_agent,
+            session_service=self._session_service,
+        )
+        self._receipt_runner = Runner(
+            app_name=APP_NAME,
+            agent=receipt_agent,
             session_service=self._session_service,
         )
         self._hotel_runner = Runner(
@@ -154,15 +198,29 @@ class AgentRunnerService:
             agent=hotel_agent,
             session_service=self._session_service,
         )
+        self._flight_runner = Runner(
+            app_name=APP_NAME,
+            agent=flight_agent,
+            session_service=self._session_service,
+        )
         self._jobs: dict[str, Job] = {}
         self._lock = asyncio.Lock()
         self._semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 
     def create_job(
-        self, job_id: str, file_path: str, filename: str, doc_type: str = "unknown"
+        self,
+        job_id: str,
+        file_path: str,
+        filename: str,
+        doc_type: str = "unknown",
+        sub_type: str | None = None,
     ) -> None:
         self._jobs[job_id] = Job(
-            job_id=job_id, filename=filename, file_path=file_path, doc_type=doc_type
+            job_id=job_id,
+            filename=filename,
+            file_path=file_path,
+            doc_type=doc_type,
+            sub_type=sub_type,
         )
 
     def get_job(self, job_id: str) -> Job | None:
@@ -185,10 +243,20 @@ class AgentRunnerService:
             user_id = f"user_{job_id}"
             session_id = f"session_{job_id}"
 
-            # doc_type already classified at upload time — no re-detection needed
+            # Routing berdasarkan 2-stage classification (doc_type + sub_type)
             doc_type = job.doc_type
-            runner = self._flight_runner if doc_type == "flight" else self._hotel_runner
+            sub_type = job.sub_type
+            if sub_type == "hotel":
+                runner = self._hotel_runner
+            elif sub_type == "flight":
+                runner = self._flight_runner
+            elif doc_type == "invoice":
+                runner = self._invoice_runner
+            else:
+                runner = self._receipt_runner
             label = _DOC_TYPE_LABEL.get(doc_type, "Dokumen")
+            if sub_type:
+                label = f"{label} ({sub_type})"
 
             try:
                 await self._session_service.create_session(
@@ -218,7 +286,11 @@ class AgentRunnerService:
                     if event.is_final_response() and event.content and event.content.parts:
                         raw_text = _extract_text(event.content.parts)
                         parsed = _parse_json_result(raw_text)
-                        job.result = _unwrap_agent_result(parsed)
+                        result = _unwrap_agent_result(parsed)
+                        # Pastikan doc_type stage-1 selalu ada di output
+                        if isinstance(result, dict):
+                            result.setdefault("doc_type", job.doc_type)
+                        job.result = result
 
                 job.status = JobStatus.DONE
                 job.push({"type": "complete", "result": job.result})

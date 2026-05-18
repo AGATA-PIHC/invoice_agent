@@ -9,10 +9,17 @@ from unittest.mock import MagicMock
 _STUB_MODS = [
     "fitz",
     "google", "google.adk", "google.adk.runners", "google.adk.sessions",
+    "google.adk.agents",
     "google.genai", "google.genai.types",
-    "baca_invoice", "baca_invoice.agent",
-    "baca_invoice.agents", "baca_invoice.agents.flight", "baca_invoice.agents.hotel",
+    # baca_invoice package itself is NOT stubbed so real submodules (models.*) load fine.
+    # Only stub the submodules that pull in google-adk or fitz at import time.
+    "baca_invoice.agent",
+    "baca_invoice.agents",
+    "baca_invoice.agents.flight", "baca_invoice.agents.hotel",
+    "baca_invoice.agents.invoice", "baca_invoice.agents.receipt",
     "baca_invoice.tools", "baca_invoice.tools.constants",
+    "baca_invoice.tools.combined", "baca_invoice.tools.authenticity",
+    "baca_invoice.tools.pdf",
 ]
 for _name in _STUB_MODS:
     sys.modules.setdefault(_name, MagicMock())
@@ -43,9 +50,17 @@ class MockRunnerService:
     def __init__(self):
         self._jobs: dict[str, Job] = {}
 
-    def create_job(self, job_id: str, file_path: str, filename: str, doc_type: str = "hotel"):
+    def create_job(
+        self,
+        job_id: str,
+        file_path: str,
+        filename: str,
+        doc_type: str = "invoice",
+        sub_type: str | None = None,
+    ):
         self._jobs[job_id] = Job(
-            job_id=job_id, filename=filename, file_path=file_path, doc_type=doc_type
+            job_id=job_id, filename=filename, file_path=file_path,
+            doc_type=doc_type, sub_type=sub_type,
         )
 
     def get_job(self, job_id: str) -> Job | None:
@@ -77,8 +92,9 @@ def mock_runner():
 
 @pytest.fixture
 def stub_classify(monkeypatch):
-    """Make classify_document always return 'flight' so minimal test PDFs pass."""
-    monkeypatch.setattr("web.api.v1_upload.classify_document", lambda fn, fp: "flight")
+    """Stub both classifiers so minimal test PDFs pass without real PDF parsing."""
+    monkeypatch.setattr("web.api.v1_upload.classify_document", lambda fn, fp: "invoice")
+    monkeypatch.setattr("web.api.v1_upload.classify_sub_type", lambda fn, fp: "hotel")
 
 
 @pytest.fixture(autouse=True)
