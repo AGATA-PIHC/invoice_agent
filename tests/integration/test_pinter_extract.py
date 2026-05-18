@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 
 async def _insert_job(trx_id: str, status: str, result=None, error=None, created_at=None):
@@ -9,7 +9,7 @@ async def _insert_job(trx_id: str, status: str, result=None, error=None, created
     import aiosqlite
     from web.db.sqlite import _DB_PATH
 
-    now = (created_at or datetime.now(timezone.utc)).isoformat()
+    now = (created_at or datetime.now(UTC)).isoformat()
     result_str = __import__("json").dumps(result) if result else None
     async with aiosqlite.connect(_DB_PATH) as db:
         await db.execute(
@@ -70,7 +70,7 @@ async def test_extract_unknown_trx_id_returns_404(client):
 
 async def test_extract_expired_trx_returns_410(client):
     trx_id = str(uuid.uuid4())
-    old = datetime.now(timezone.utc) - timedelta(days=8)
+    old = datetime.now(UTC) - timedelta(days=8)
     await _insert_job(trx_id, "success", created_at=old)
 
     resp = await client.get(f"/api/pinter/extract?trx_id={trx_id}")
