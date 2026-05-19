@@ -12,6 +12,9 @@ load_dotenv(_root / ".env")
 APP_ENV: Literal["development", "production"] = os.getenv("APP_ENV", "development")  # type: ignore[assignment]
 IS_PRODUCTION: bool = APP_ENV == "production"
 
+# Swagger UI gate. Default: on in development, off in production. Set ENABLE_DOCS=1 to force-enable in prod.
+ENABLE_DOCS: bool = os.getenv("ENABLE_DOCS", "").lower() in ("1", "true", "yes") or not IS_PRODUCTION
+
 UPLOAD_DIR: Path = Path(os.getenv("UPLOAD_DIR", str(_root / "tmp_uploads")))
 APP_NAME: str = "invoice_verifier"
 MAX_UPLOAD_MB: int = int(os.getenv("MAX_UPLOAD_MB", "20"))
