@@ -23,7 +23,7 @@ _CSP_DOCS = (
 )
 
 # Paths that serve Swagger/ReDoc UI
-_DOCS_PATHS = ("/docs", "/redoc", "/openapi.json")
+_DOCS_PATHS = ("/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json")
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):

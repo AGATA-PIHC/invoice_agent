@@ -52,6 +52,9 @@ desktop.ini
 # Upload temp directory (runtime, tidak perlu di-commit)
 tmp_uploads/
 
+# SQLite database (runtime)
+data/
+
 # Code review artifacts
 .full-review/
 

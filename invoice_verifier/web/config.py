@@ -19,3 +19,12 @@ MAX_CONCURRENT_JOBS: int = int(os.getenv("MAX_CONCURRENT_JOBS", "10"))
 JOB_TTL_SECONDS: int = int(os.getenv("JOB_TTL_SECONDS", "3600"))
 # Auto-generated per process if not set — set JOB_SECRET_KEY in .env to persist across restarts.
 JOB_SECRET_KEY: str = os.getenv("JOB_SECRET_KEY") or secrets.token_hex(32)
+
+# SQLite database path for PINTER upload/extract API.
+SQLITE_DB_PATH: str = os.getenv("SQLITE_DB_PATH", str(_root / "data" / "invoice_verifier.db"))
+
+# API key for PINTER endpoints (X-API-Key header). Unset = auth disabled (dev only).
+PINTER_API_KEY: str | None = os.getenv("PINTER_API_KEY") or None
+
+# Time-to-live for trx_id in PINTER endpoints. After this, GET /extract returns TRX_EXPIRED.
+PINTER_TRX_TTL_DAYS: int = int(os.getenv("PINTER_TRX_TTL_DAYS", "7"))

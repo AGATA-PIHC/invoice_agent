@@ -2,88 +2,122 @@ from __future__ import annotations
 
 from web.config import MAX_UPLOAD_MB, UPLOAD_DIR
 
+# ── Happy path ────────────────────────────────────────────────────────────
 
-async def test_upload_valid_pdf(client, pdf_bytes):
+async def test_upload_returns_trx_id(client, pdf_bytes):
     resp = await client.post(
-        "/api/verify/upload",
+        "/api/pinter/upload",
         files={"file": ("invoice.pdf", pdf_bytes, "application/pdf")},
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert "job_id" in data
-    assert "token" in data
-    assert data["filename"] == "invoice.pdf"
+    assert "trx_id" in data
+    assert data["status"] == "progress"
+    assert "message" in data
 
 
-async def test_upload_reject_non_pdf(client):
+async def test_upload_file_saved_to_upload_dir(client, pdf_bytes):
     resp = await client.post(
-        "/api/verify/upload",
-        files={"file": ("doc.txt", b"hello", "text/plain")},
+        "/api/pinter/upload",
+        files={"file": ("receipt.pdf", pdf_bytes, "application/pdf")},
+    )
+    assert resp.status_code == 200
+    trx_id = resp.json()["trx_id"]
+    dest = UPLOAD_DIR / trx_id / "receipt.pdf"
+    assert dest.exists()
+
+
+async def test_upload_job_created_in_db(client, pdf_bytes):
+    from web.db.sqlite import get_job
+    resp = await client.post(
+        "/api/pinter/upload",
+        files={"file": ("test.pdf", pdf_bytes, "application/pdf")},
+    )
+    assert resp.status_code == 200
+    trx_id = resp.json()["trx_id"]
+    record = await get_job(trx_id)
+    assert record is not None
+    # Background task may have completed by now in fast mock — accept either state
+    assert record["status"] in ("progress", "success")
+    assert record["filename"] == "test.pdf"
+
+
+# ── Validasi file ─────────────────────────────────────────────────────────
+
+async def test_upload_reject_non_pdf_extension(client):
+    resp = await client.post(
+        "/api/pinter/upload",
+        files={"file": ("document.txt", b"hello world", "text/plain")},
     )
     assert resp.status_code == 400
+    data = resp.json()
+    assert data["error_code"] == "INVALID_FILE_TYPE"
+
+
+async def test_upload_reject_fake_pdf_magic_bytes(client):
+    """File has .pdf extension but invalid magic bytes."""
+    resp = await client.post(
+        "/api/pinter/upload",
+        files={"file": ("fake.pdf", b"not a real pdf", "application/pdf")},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error_code"] == "INVALID_FILE_TYPE"
 
 
 async def test_upload_reject_oversized_file(client):
-    big = b"x" * (MAX_UPLOAD_MB * 1024 * 1024 + 1)
+    big = b"%PDF" + b"x" * (MAX_UPLOAD_MB * 1024 * 1024 + 1)
     resp = await client.post(
-        "/api/verify/upload",
+        "/api/pinter/upload",
         files={"file": ("big.pdf", big, "application/pdf")},
     )
     assert resp.status_code == 413
+    assert resp.json()["error_code"] == "FILE_TOO_LARGE"
 
 
-async def test_upload_empty_filename_rejected(client, pdf_bytes):
+async def test_upload_reject_missing_file(client):
+    """Request without any file field → seragam 400 MISSING_FILE."""
+    resp = await client.post("/api/pinter/upload")
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body["status"] == "fail"
+    assert body["error_code"] == "MISSING_FILE"
+    assert "file" in body["message"].lower() or "pdf" in body["message"].lower()
+
+
+# ── Doc-type unknown ──────────────────────────────────────────────────────
+
+async def test_upload_unknown_doctype_message(client, pdf_bytes, monkeypatch):
+    """When doc_type is unknown the response still returns 200 with doc_type='unknown' message."""
+    monkeypatch.setattr("web.api.v1_upload.classify_document", lambda fn, fp: "unknown")
+
+    async def _noop_persist(trx_id, fp):
+        pass
+
+    monkeypatch.setattr("web.api.v1_upload._persist_unknown", _noop_persist)
     resp = await client.post(
-        "/api/verify/upload",
-        files={"file": ("", pdf_bytes, "application/pdf")},
-    )
-    # FastAPI may return 422 (validation) or 400 (our check) for empty filename
-    assert resp.status_code in (400, 422)
-
-
-async def test_status_endpoint_with_valid_token(client, uploaded_job):
-    job_id = uploaded_job["job_id"]
-    token = uploaded_job["token"]
-
-    resp = await client.get(f"/api/verify/{job_id}/status?token={token}")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["job_id"] == job_id
-    assert data["status"] in ("pending", "running", "done", "error")
-
-
-async def test_result_endpoint_with_valid_token(client, uploaded_job):
-    job_id = uploaded_job["job_id"]
-    token = uploaded_job["token"]
-
-    resp = await client.get(f"/api/verify/{job_id}/result?token={token}")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "status" in data
-
-
-async def test_unknown_job_returns_404(client, uploaded_job):
-    fake_id = "00000000-0000-0000-0000-000000000000"
-    # Token for fake_id would be different; we need a valid token for this fake_id
-    from web.dependencies import make_job_token
-    fake_token = make_job_token(fake_id)
-
-    resp = await client.get(f"/api/verify/{fake_id}/status?token={fake_token}")
-    assert resp.status_code == 404
-
-
-async def test_health_endpoint(client):
-    resp = await client.get("/health")
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "ok"
-
-
-async def test_file_stored_in_upload_dir(client, pdf_bytes):
-    resp = await client.post(
-        "/api/verify/upload",
-        files={"file": ("check.pdf", pdf_bytes, "application/pdf")},
+        "/api/pinter/upload",
+        files={"file": ("unknown.pdf", pdf_bytes, "application/pdf")},
     )
     assert resp.status_code == 200
-    job_id = resp.json()["job_id"]
-    dest = UPLOAD_DIR / job_id / "check.pdf"
-    assert dest.exists()
+    body = resp.json()
+    assert body["status"] == "progress"
+    assert "unknown" in body["message"].lower()
+
+
+# ── Rate limiting ─────────────────────────────────────────────────────────
+
+async def test_upload_rate_limit_triggers_on_11th_request(client, pdf_bytes):
+    """11 uploads from same IP within the window → 429 on the 11th."""
+    for i in range(10):
+        r = await client.post(
+            "/api/pinter/upload",
+            files={"file": (f"inv{i}.pdf", pdf_bytes, "application/pdf")},
+        )
+        assert r.status_code == 200, f"Request {i+1} should succeed"
+
+    r = await client.post(
+        "/api/pinter/upload",
+        files={"file": ("inv11.pdf", pdf_bytes, "application/pdf")},
+    )
+    assert r.status_code == 429
+    assert r.json()["error_code"] == "RATE_LIMITED"

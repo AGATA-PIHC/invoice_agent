@@ -733,6 +733,58 @@ body {
 }
 
 /* ── Field Grid ── */
+.json-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+
+.json-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color .15s, color .15s, background .15s;
+}
+
+.json-copy-btn:hover {
+  background: var(--bg-surface);
+  border-color: var(--border-hover);
+  color: var(--text);
+}
+
+.json-copy-btn svg {
+  flex-shrink: 0;
+}
+
+.json-viewer {
+  max-height: 520px;
+  overflow: auto;
+  margin: 0;
+  padding: 14px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.json-viewer code {
+  font-family: inherit;
+}
+
 .field-section { margin-bottom: 26px; }
 .field-section:last-child { margin-bottom: 0; }
 

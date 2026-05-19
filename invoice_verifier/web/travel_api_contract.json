@@ -1,0 +1,457 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Invoice Verifier",
+    "description": "Verifikasi dokumen perjalanan dinas menggunakan AI Agent",
+    "version": "1.0.0",
+    "x-integration": "PISmart -> PINTER"
+  },
+  "paths": {
+    "/api/travel/submit": {
+      "post": {
+        "tags": [
+          "travel"
+        ],
+        "summary": "Kirim dokumen travel untuk diverifikasi",
+        "description": "Terima dokumen PDF (invoice/receipt) dari PISmart, jalankan OCR & verifikasi AI, kembalikan transaction_id. Gunakan GET /api/travel/result/{transaction_id} untuk mengambil hasilnya.",
+        "operationId": "submit_document_api_travel_submit_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TravelSubmitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TravelSubmitResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/travel/result/{transaction_id}": {
+      "get": {
+        "tags": [
+          "travel"
+        ],
+        "summary": "Ambil hasil verifikasi berdasarkan transaction_id",
+        "description": "Poll endpoint ini setelah POST /submit. status='processing' artinya masih berjalan. status='completed' artinya hasil tersedia di field 'result'. Jika OCR confidence rendah, field 'warning' akan diisi — hasil tetap dikembalikan (tidak jadi stopper).",
+        "operationId": "get_result_api_travel_result__transaction_id__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "transaction_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Transaction Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TravelResultResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Body_upload_file_api_verify_upload_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_file_api_verify_upload_post"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "jobs_active": {
+            "type": "integer",
+            "title": "Jobs Active"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "jobs_active"
+        ],
+        "title": "HealthResponse"
+      },
+      "JobResultResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "JobResultResponse"
+      },
+      "JobStatusResponse": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "event_count": {
+            "type": "integer",
+            "title": "Event Count"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "status",
+          "filename",
+          "event_count"
+        ],
+        "title": "JobStatusResponse"
+      },
+      "TravelResultResponse": {
+        "properties": {
+          "transaction_id": {
+            "type": "string",
+            "title": "Transaction Id"
+          },
+          "reference_id": {
+            "type": "string",
+            "title": "Reference Id"
+          },
+          "document_type": {
+            "type": "string",
+            "title": "Document Type"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "ocr_confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ocr Confidence",
+            "description": "Confidence level OCR 0.0–1.0. None jika belum selesai."
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warning"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "transaction_id",
+          "reference_id",
+          "document_type",
+          "status"
+        ],
+        "title": "TravelResultResponse"
+      },
+      "TravelSubmitRequest": {
+        "properties": {
+          "document_type": {
+            "type": "string",
+            "enum": [
+              "invoice",
+              "receipt"
+            ],
+            "title": "Document Type",
+            "description": "invoice = tagihan (belum dibayar), receipt = bukti bayar"
+          },
+          "source_system": {
+            "type": "string",
+            "title": "Source System",
+            "description": "Nama sistem pengirim, e.g. 'PISmart'"
+          },
+          "reference_id": {
+            "type": "string",
+            "title": "Reference Id",
+            "description": "ID referensi dari sistem pengirim"
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename",
+            "description": "Nama file PDF, harus berakhiran .pdf"
+          },
+          "file_base64": {
+            "type": "string",
+            "title": "File Base64",
+            "description": "Isi file PDF di-encode base64"
+          }
+        },
+        "type": "object",
+        "required": [
+          "document_type",
+          "source_system",
+          "reference_id",
+          "filename",
+          "file_base64"
+        ],
+        "title": "TravelSubmitRequest"
+      },
+      "TravelSubmitResponse": {
+        "properties": {
+          "transaction_id": {
+            "type": "string",
+            "title": "Transaction Id"
+          },
+          "reference_id": {
+            "type": "string",
+            "title": "Reference Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "submitted_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Submitted At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "transaction_id",
+          "reference_id",
+          "status",
+          "submitted_at"
+        ],
+        "title": "TravelSubmitResponse"
+      },
+      "UploadResponse": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "token": {
+            "type": "string",
+            "title": "Token"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "filename",
+          "token"
+        ],
+        "title": "UploadResponse"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "APIKeyHeader": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key"
+      }
+    }
+  }
+}
