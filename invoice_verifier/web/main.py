@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from web.api.v1_upload import router as v1_upload_router
-from web.config import IS_PRODUCTION, UPLOAD_DIR
+from web.config import ENABLE_DOCS, UPLOAD_DIR
 from web.db.sqlite import init_db
 from web.middleware import RequestIDMiddleware, SecurityHeadersMiddleware
 from web.models.responses import HealthResponse
@@ -60,7 +60,8 @@ app = FastAPI(
     description="Verifikasi dokumen perjalanan dinas menggunakan AI Agent",
     version="1.0.0",
     lifespan=lifespan,
-    docs_url=None if IS_PRODUCTION else "/docs",
+    docs_url="/docs" if ENABLE_DOCS else None,
+    openapi_url="/openapi.json" if ENABLE_DOCS else None,
     redoc_url=None,
 )
 
