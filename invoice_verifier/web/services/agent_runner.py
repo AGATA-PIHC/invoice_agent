@@ -132,7 +132,7 @@ _HOTEL_KEYWORDS = frozenset({
     "inn", "resort", "malam", "nights", "room",
 })
 _FLIGHT_KEYWORDS = frozenset({
-    "pesawat", "flight", "tiket", "airasia", "garuda", "lion",
+    "pesawat", "flight", "airasia", "garuda", "lion",
     "airline", "boarding", "citilink", "batik", "wings",
 })
 
@@ -242,20 +242,25 @@ class AgentRunnerService:
             user_id = f"user_{job_id}"
             session_id = f"session_{job_id}"
 
-            # Routing berdasarkan 2-stage classification (doc_type + sub_type)
+            # Routing berdasarkan 2-stage classification (doc_type + sub_type).
+            # Sub-type must stay compatible with the public doc_type.  For example,
+            # "tiket.com" is a travel provider but not always a flight document.
             doc_type = job.doc_type
             sub_type = job.sub_type
-            if sub_type == "hotel":
+            effective_sub_type = None
+            if doc_type == "invoice" and sub_type == "hotel":
                 runner = self._hotel_runner
-            elif sub_type == "flight":
+                effective_sub_type = sub_type
+            elif doc_type == "receipt" and sub_type == "flight":
                 runner = self._flight_runner
+                effective_sub_type = sub_type
             elif doc_type == "invoice":
                 runner = self._invoice_runner
             else:
                 runner = self._receipt_runner
             label = _DOC_TYPE_LABEL.get(doc_type, "Dokumen")
-            if sub_type:
-                label = f"{label} ({sub_type})"
+            if effective_sub_type:
+                label = f"{label} ({effective_sub_type})"
 
             try:
                 await self._session_service.create_session(

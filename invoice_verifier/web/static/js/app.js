@@ -181,6 +181,7 @@ function renderResult(data) {
   }
 
   renderAuthenticity(data.authenticity || {});
+  renderJsonDetail(data);
   initTabs();
   resultPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -250,9 +251,13 @@ function renderInvoiceDetail(r) {
   // Support BOTH the new InvoiceResult schema AND the legacy HotelInvoiceResult schema
   // (when stage-2 routing picked hotel_agent, output uses hotel fields with doc_type=invoice).
   const isHotelShape = 'hotel_name' in r || 'check_in_date' in r;
+  const isFlightShape = 'airline' in r || 'route_from' in r;
 
   if (isHotelShape) {
     return renderHotelInvoiceDetail(r);
+  }
+  if (isFlightShape) {
+    return renderFlightReceiptDetail(r);
   }
 
   const items = (r.line_items || []).map(it =>
@@ -344,7 +349,11 @@ function renderHotelInvoiceDetail(r) {
 
 function renderReceiptDetail(r) {
   // Support both new ReceiptResult and legacy FlightTicketResult shapes
+  const isHotelShape = 'hotel_name' in r || 'check_in_date' in r;
   const isFlightShape = 'airline' in r || 'route_from' in r;
+  if (isHotelShape) {
+    return renderHotelInvoiceDetail(r);
+  }
   if (isFlightShape) {
     return renderFlightReceiptDetail(r);
   }
@@ -522,6 +531,35 @@ function renderAuthenticity(auth) {
 }
 
 // ─── Tabs ─────────────────────────────────────────────────────────────────────
+function renderJsonDetail(data) {
+  const json = JSON.stringify(data, null, 2);
+  $('tab-json').innerHTML = `
+    <div class="json-toolbar">
+      <button type="button" class="json-copy-btn" id="btn-copy-json">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+          <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+        </svg>
+        Copy JSON
+      </button>
+    </div>
+    <pre class="json-viewer"><code>${escHtml(json)}</code></pre>`;
+
+  const btn = $('btn-copy-json');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(json);
+      const original = btn.innerHTML;
+      btn.textContent = 'Copied';
+      setTimeout(() => { btn.innerHTML = original; }, 1200);
+    } catch {
+      btn.textContent = 'Copy gagal';
+      setTimeout(() => { btn.textContent = 'Copy JSON'; }, 1200);
+    }
+  });
+}
+
 function initTabs() {
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
