@@ -1,31 +1,31 @@
 KNOWN_PROVIDERS: dict[str, dict] = {
     "traveloka": {
         "keywords": ["traveloka", "pt trinusa travelindo", "www.traveloka.com"],
-        "valid_creators": ["skia", "chrome", "chromium", "webkit", "wkhtmltopdf"],
+        "valid_creators": ["skia", "chrome", "chromium", "webkit", "wkhtmltopdf", "iText"],
     },
     "tiket.com": {
         "keywords": ["tiket.com", "pt global tiket network", "www.tiket.com"],
-        "valid_creators": ["skia", "chrome", "chromium", "webkit", "wkhtmltopdf"],
+        "valid_creators": ["skia", "chrome", "chromium", "webkit","iText", "wkhtmltopdf"],
     },
     "trip.com": {
         "keywords": ["trip.com", "ctrip", "www.trip.com"],
-        "valid_creators": ["skia", "chrome", "chromium", "webkit"],
+        "valid_creators": ["skia", "chrome", "chromium", "iText", "webkit"],
     },
     "airasia": {
         "keywords": ["airasia", "air asia", "capital a", "www.airasia.com"],
-        "valid_creators": ["skia", "chrome", "chromium", "webkit"],
+        "valid_creators": ["skia", "chrome", "chromium", "iText", "webkit"],
     },
     "garuda": {
         "keywords": ["garuda indonesia", "pt garuda", "citilink", "www.garuda-indonesia.com"],
-        "valid_creators": [],
+        "valid_creators": ["iText"],
     },
     "lion_air": {
         "keywords": ["lion air", "pt lion mentari", "batik air", "wings air"],
-        "valid_creators": [],
+        "valid_creators": ["iText"],
     },
     "kai": {
         "keywords": ["kereta api indonesia", "pt kai", "kai.id", "tiket.kai.id"],
-        "valid_creators": ["skia", "chrome", "chromium", "webkit"],
+        "valid_creators": ["skia","iText", "chrome", "chromium", "webkit"],
     },
 }
 
@@ -54,8 +54,7 @@ SOFTWARE_LABELS: dict[str, str] = {
     "gimp": "GIMP (editor gambar/foto)",
     "phantom pdf": "PhantomPDF (software edit PDF)",
     "pdffiller": "PDFfiller (tool online edit PDF)",
-    "pdf-xchange": "PDF-XChange Editor (software edit PDF)",
-    "itext": "iText (library pemrosesan PDF programatik)",
+    "pdf-xchange": "PDF-XChange Editor (software edit PDF)"
 }
 
 CONFIDENCE_DEDUCTIONS: dict[str, float] = {

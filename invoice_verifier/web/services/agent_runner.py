@@ -681,7 +681,10 @@ def _agent_rejects_claimed_doc_type(result: dict, doc_type: str, sub_type: str |
     if not any(marker in joined_text for marker in _NON_TRAVEL_DOC_MARKERS):
         return False
 
-    evidence_fields = list(_INVOICE_EVIDENCE_FIELDS if doc_type == "invoice" else _RECEIPT_EVIDENCE_FIELDS)
+    evidence_source = (
+        _INVOICE_EVIDENCE_FIELDS if doc_type == "invoice" else _RECEIPT_EVIDENCE_FIELDS
+    )
+    evidence_fields = list(evidence_source)
     if sub_type == "hotel":
         evidence_fields.extend(_HOTEL_EVIDENCE_FIELDS)
     elif sub_type == "flight":
@@ -719,7 +722,10 @@ def _validate_agent_result(
     if not isinstance(result, dict) or set(result) == {"raw"}:
         raise ValueError("Agent did not return a valid JSON object matching the expected schema.")
 
-    if doc_type in ("invoice", "receipt") and _agent_rejects_claimed_doc_type(result, doc_type, sub_type):
+    if (
+        doc_type in ("invoice", "receipt")
+        and _agent_rejects_claimed_doc_type(result, doc_type, sub_type)
+    ):
         result = _mark_unknown_result(result)
     else:
         result["doc_type"] = doc_type
