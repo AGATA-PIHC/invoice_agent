@@ -1,17 +1,8 @@
 from __future__ import annotations
 
-import sys
-from unittest.mock import MagicMock
+from baca_invoice.models.travel_document import InvoiceLineItem, ReceiptItem, TravelDocumentResult
+from baca_invoice.models.unknown import UnknownResult
 
-# Stub heavy deps before importing models
-for _mod in ("fitz", "google", "google.adk", "baca_invoice.tools", "baca_invoice.tools.constants"):
-    sys.modules.setdefault(_mod, MagicMock())
-
-from baca_invoice.models.invoice import InvoiceLineItem, InvoiceResult  # noqa: E402
-from baca_invoice.models.receipt import ReceiptItem, ReceiptResult  # noqa: E402
-from baca_invoice.models.unknown import UnknownResult  # noqa: E402
-
-# ── InvoiceLineItem ───────────────────────────────────────────────────────────
 
 def test_invoice_line_item_defaults():
     item = InvoiceLineItem()
@@ -21,15 +12,17 @@ def test_invoice_line_item_defaults():
     assert item.subtotal == 0.0
 
 
-# ── InvoiceResult ─────────────────────────────────────────────────────────────
+def test_receipt_item_defaults():
+    item = ReceiptItem()
+    assert item.description == "-"
+    assert item.quantity == 0.0
+    assert item.price == 0.0
 
-def test_invoice_result_doc_type_literal():
-    result = InvoiceResult()
+
+def test_travel_document_invoice_defaults():
+    result = TravelDocumentResult(doc_type="invoice", document_subtype="hotel")
     assert result.doc_type == "invoice"
-
-
-def test_invoice_result_defaults():
-    result = InvoiceResult()
+    assert result.document_subtype == "hotel"
     assert result.invoice_number == "-"
     assert result.vendor_name == "-"
     assert result.buyer_name == "-"
@@ -44,18 +37,24 @@ def test_invoice_result_defaults():
     assert result.summary == "-"
 
 
-def test_invoice_result_doc_type_cannot_be_changed():
-    result = InvoiceResult(doc_type="invoice")
-    assert result.doc_type == "invoice"
+def test_travel_document_receipt_with_items():
+    result = TravelDocumentResult(
+        doc_type="receipt",
+        document_subtype="flight",
+        receipt_number="TRX-123",
+        merchant_name="Garuda Indonesia",
+        total_payment=1275000.0,
+        items_purchased=[ReceiptItem(description="Tiket CGK-DPS", quantity=1, price=1250000)],
+    )
+    assert result.receipt_number == "TRX-123"
+    assert len(result.items_purchased) == 1
+    assert result.items_purchased[0].price == 1250000.0
 
 
-def test_invoice_result_extraction_confidence_bounds():
-    result = InvoiceResult(extraction_confidence=0.85)
-    assert result.extraction_confidence == 0.85
-
-
-def test_invoice_result_with_line_items():
-    result = InvoiceResult(
+def test_travel_document_line_items():
+    result = TravelDocumentResult(
+        doc_type="invoice",
+        document_subtype="hotel",
         invoice_number="INV-001",
         vendor_name="PT Hotel Indah",
         total_payment=1887000.0,
@@ -70,51 +69,14 @@ def test_invoice_result_with_line_items():
     assert result.line_items[0].subtotal == 1700000.0
 
 
-# ── ReceiptItem ───────────────────────────────────────────────────────────────
-
-def test_receipt_item_defaults():
-    item = ReceiptItem()
-    assert item.description == "-"
-    assert item.quantity == 0.0
-    assert item.price == 0.0
-
-
-# ── ReceiptResult ─────────────────────────────────────────────────────────────
-
-def test_receipt_result_doc_type_literal():
-    result = ReceiptResult()
-    assert result.doc_type == "receipt"
-
-
-def test_receipt_result_defaults():
-    result = ReceiptResult()
-    assert result.receipt_number == "-"
-    assert result.merchant_name == "-"
-    assert result.payer_name == "-"
-    assert result.items_purchased == []
-    assert result.subtotal == 0.0
-    assert result.service_fee == 0.0
-    assert result.total_payment == 0.0
-    assert result.currency == "IDR"
-    assert result.payment_method == "-"
-    assert result.payment_status == "-"
-    assert result.extraction_confidence == 0.0
-    assert result.requires_manual_review is False
-
-
-def test_receipt_result_with_items():
-    result = ReceiptResult(
-        receipt_number="TRX-123",
-        merchant_name="Garuda Indonesia",
-        total_payment=1275000.0,
-        items_purchased=[ReceiptItem(description="Tiket CGK→DPS", quantity=1, price=1250000)],
+def test_travel_document_string_normalization():
+    result = TravelDocumentResult(
+        doc_type="invoice",
+        document_subtype="hotel",
+        facilities=["wifi", "gym"],
     )
-    assert result.receipt_number == "TRX-123"
-    assert len(result.items_purchased) == 1
-    assert result.items_purchased[0].price == 1250000.0
+    assert result.facilities == "wifi, gym"
 
-
-# ── UnknownResult ─────────────────────────────────────────────────────────────
 
 def test_unknown_result_doc_type_literal():
     result = UnknownResult()
@@ -132,7 +94,6 @@ def test_unknown_result_defaults():
 
 
 def test_unknown_result_review_reasons_independent():
-    """Each UnknownResult instance has its own list (no shared mutable default)."""
     a = UnknownResult()
     b = UnknownResult()
     a.review_reasons.append("extra")

@@ -248,15 +248,10 @@ function renderSummary(r, docType) {
 }
 
 function renderInvoiceDetail(r) {
-  // Support BOTH the new InvoiceResult schema AND the legacy HotelInvoiceResult schema
-  // (when stage-2 routing picked hotel_agent, output uses hotel fields with doc_type=invoice).
-  const isHotelShape = 'hotel_name' in r || 'check_in_date' in r;
-  const isFlightShape = 'airline' in r || 'route_from' in r;
-
-  if (isHotelShape) {
+  if (r.document_subtype === 'hotel') {
     return renderHotelInvoiceDetail(r);
   }
-  if (isFlightShape) {
+  if (r.document_subtype === 'flight') {
     return renderFlightReceiptDetail(r);
   }
 
@@ -348,13 +343,10 @@ function renderHotelInvoiceDetail(r) {
 }
 
 function renderReceiptDetail(r) {
-  // Support both new ReceiptResult and legacy FlightTicketResult shapes
-  const isHotelShape = 'hotel_name' in r || 'check_in_date' in r;
-  const isFlightShape = 'airline' in r || 'route_from' in r;
-  if (isHotelShape) {
+  if (r.document_subtype === 'hotel') {
     return renderHotelInvoiceDetail(r);
   }
-  if (isFlightShape) {
+  if (r.document_subtype === 'flight') {
     return renderFlightReceiptDetail(r);
   }
 

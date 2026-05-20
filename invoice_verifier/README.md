@@ -181,14 +181,10 @@ curl "http://localhost:8080/api/pinter/extract?trx_id={trx_id}" \
 
 | Model | doc_type | File |
 |-------|----------|------|
-| `InvoiceResult` | `"invoice"` | [`baca_invoice/models/invoice.py`](baca_invoice/models/invoice.py) |
-| `ReceiptResult` | `"receipt"` | [`baca_invoice/models/receipt.py`](baca_invoice/models/receipt.py) |
-| `UnknownResult` | `"unknown"` | [`baca_invoice/models/unknown.py`](baca_invoice/models/unknown.py) |
-| `HotelInvoiceResult` | (internal) | [`baca_invoice/models/hotel.py`](baca_invoice/models/hotel.py) |
-| `FlightTicketResult` | (internal) | [`baca_invoice/models/flight.py`](baca_invoice/models/flight.py) |
+| `TravelDocumentResult` | `"invoice"` / `"receipt"` / `"unknown"` | [`baca_invoice/models/travel_document.py`](baca_invoice/models/travel_document.py) |
 | `DocumentAuthenticity` | shared | [`baca_invoice/models/authenticity.py`](baca_invoice/models/authenticity.py) |
 
-`doc_type` selalu ada di setiap response `success` (otomatis di-inject oleh service layer kalau agent tidak mengisinya).
+`doc_type` dan `document_subtype` selalu ada di setiap response `success`. Semua hasil memakai satu schema gabungan; field yang tidak relevan tetap hadir dengan default `"-"`, `0.0`, `false`, atau `[]`.
 
 ---
 
