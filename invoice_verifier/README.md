@@ -27,8 +27,7 @@ AgentRunnerService.run_job()
   -> document_agent membaca PDF via analyze_document(file_path)
   -> document_agent menentukan doc_type: invoice / receipt / unknown
   -> document_agent menentukan document_subtype: hotel / flight / unknown
-  -> jika subtype hotel/flight, document_agent dapat memakai AgentTool helper
-  -> hasil dinormalisasi oleh formatter_agent ke TravelDocumentResult
+  -> validate_agent_result() meng-coerce ke TravelDocumentResult Pydantic
   -> hasil valid disimpan ke SQLite sebagai status success
 
 GET /api/pinter/extract?trx_id=...
@@ -40,39 +39,43 @@ GET /api/pinter/extract?trx_id=...
 
 Runtime API hanya memakai satu agent utama:
 
-- `baca_invoice/agents/document.py` - `document_agent`
-- `baca_invoice/agents/formatter.py` - normalisasi schema output
-- `baca_invoice/agents/hotel.py` - AgentTool helper detail hotel
-- `baca_invoice/agents/flight.py` - AgentTool helper detail flight
+- `baca_invoice/agents/document.py` — `document_agent`
 
-`document_agent` adalah source of truth untuk:
+`document_agent` adalah satu-satunya agent dan source of truth untuk:
 
 - `doc_type`: `invoice`, `receipt`, atau `unknown`
 - `document_subtype`: `hotel`, `flight`, atau `unknown`
 
-Backend tidak melakukan routing ke agent spesifik. `hotel_agent` dan `flight_agent`
-hanya dipakai sebagai tools internal oleh `document_agent`.
+Backend tidak melakukan routing ke agent spesifik. Seluruh klasifikasi dan
+ekstraksi (termasuk field hotel/flight) dikerjakan dalam satu LLM call oleh
+`document_agent` dengan tool `analyze_document`.
 
 ## Struktur Kode Penting
 
 ```text
 web/
-  main.py                    FastAPI app, lifespan, error handlers
-  api/v1_upload.py           Endpoint upload/extract
-  db/sqlite.py               CRUD SQLite upload_jobs
-  services/agent_runner.py   Runner ADK, validasi hasil, cleanup file
+  main.py                          FastAPI app, lifespan, error handlers
+  middleware.py                    Security headers + request-id
+  security.py                      verify_api_key dependency
+  config.py                        ENV loader
+  api/v1_upload.py                 Endpoint upload/extract (routes only)
+  db/sqlite.py                     CRUD SQLite upload_jobs
+  services/agent_runner.py         AgentRunnerService + eviction loop
+  services/agent_io.py             Parsing event ADK -> dict JSON
+  services/result_validator.py     Coerce hasil agent ke TravelDocumentResult
+  services/jobs.py                 Job dataclass, status, file cleanup
+  services/rate_limit.py           Sliding-window rate limiter
 
 baca_invoice/
-  agent.py                   ADK root_agent = document_agent
-  agents/document.py         Agent klasifikasi + ekstraksi
-  agents/hotel.py            Helper AgentTool untuk detail hotel
-  agents/flight.py           Helper AgentTool untuk detail flight
-  agents/formatter.py        Agent normalisasi schema
-  agents/prompts.py          Prompt document/hotel/flight helper
-  models/travel_document.py  Schema JSON final
-  tools/combined.py          Tool analyze_document
-  tools/pdf.py               Ekstraksi teks/metadata PDF
-  tools/authenticity.py      Analisis authenticity
+  agent.py                         ADK root_agent = document_agent
+  agents/document.py               Agent klasifikasi + ekstraksi (1 LLM call)
+  agents/prompts.py                Prompt document_agent
+  models/travel_document.py        Schema JSON final
+  models/authenticity.py           Schema authenticity block
+  tools/combined.py                Tool `analyze_document` untuk agent
+  tools/pdf.py                     read_pdf — teks + metadata
+  tools/authenticity.py            analyze_authenticity (pure function)
+  tools/constants.py               Daftar provider & software pengeditan
 ```
 
 ## Output JSON
