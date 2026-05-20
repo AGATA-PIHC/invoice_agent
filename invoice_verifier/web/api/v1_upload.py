@@ -17,7 +17,7 @@ from web.config import MAX_UPLOAD_MB, PINTER_API_KEY, PINTER_TRX_TTL_DAYS, UPLOA
 from web.db.sqlite import create_job, get_job, update_job
 from web.dependencies import get_runner_service
 from web.models.v1_upload import ExtractResponse, UploadResponse, V1ApiError
-from web.services.agent_runner import JobStatus, classify_document, classify_sub_type
+from web.services.agent_runner import JobStatus
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,11 @@ def _check_rate_limit(request: Request) -> None:
     timestamps = _ip_timestamps[ip]
     _ip_timestamps[ip] = [t for t in timestamps if now - t < _RATE_WINDOW]
     if len(_ip_timestamps[ip]) >= _RATE_LIMIT:
-        raise V1ApiError(429, "Terlalu banyak permintaan. Coba lagi dalam 1 menit.", "RATE_LIMITED")
+        raise V1ApiError(
+            429,
+            "Terlalu banyak permintaan. Coba lagi dalam 1 menit.",
+            "RATE_LIMITED",
+        )
     _ip_timestamps[ip].append(now)
 
 _MAX_BYTES = MAX_UPLOAD_MB * 1024 * 1024
@@ -107,8 +111,6 @@ async def upload_document(
         ) from e
 
     resolved_path = str(dest_path.resolve())
-    doc_type = classify_document(filename, resolved_path)
-
     try:
         await create_job(trx_id, filename)
     except Exception as e:
@@ -118,30 +120,12 @@ async def upload_document(
             500, "Terjadi kesalahan internal. Silakan coba lagi.", "INTERNAL_ERROR"
         ) from e
 
-    if doc_type == "unknown":
-        logger.info("trx %s: doc_type unknown — skip AI, kembalikan TravelDocumentResult", trx_id)
-        task = asyncio.create_task(_persist_unknown(trx_id, resolved_path))
-        _background_tasks.add(task)
-        task.add_done_callback(_background_tasks.discard)
-        return UploadResponse(
-            trx_id=trx_id,
-            status="progress",
-            message=(
-                "Dokumen diterima. Tidak dikenali sebagai invoice/receipt — "
-                "akan dikembalikan dengan doc_type='unknown'."
-            ),
-        )
-
-    # Classifier 2 (independen): hotel / flight / None
-    sub_type = classify_sub_type(filename, resolved_path)
-    logger.info("trx %s: doc_type=%s sub_type=%s", trx_id, doc_type, sub_type)
+    logger.info("trx %s: dokumen diterima, memulai document_agent", trx_id)
 
     runner_service.create_job(
         job_id=trx_id,
         file_path=resolved_path,
         filename=filename,
-        doc_type=doc_type,
-        sub_type=sub_type,
     )
 
     task = asyncio.create_task(_run_and_persist(trx_id, runner_service))
@@ -166,49 +150,6 @@ async def _run_and_persist(trx_id: str, runner_service) -> None:
             await update_job(trx_id, status="fail", error_message=error_msg)
     except Exception as exc:
         logger.exception("run_and_persist gagal untuk trx %s", trx_id)
-        await update_job(trx_id, status="fail", error_message=str(exc))
-
-
-async def _persist_unknown(trx_id: str, file_path: str) -> None:
-    try:
-        from baca_invoice.models.authenticity import DocumentAuthenticity
-        from baca_invoice.models.travel_document import TravelDocumentResult
-        from baca_invoice.tools.authenticity import analyze_document_authenticity
-
-        raw_auth = analyze_document_authenticity(file_path)
-        raw_auth["verdict"] = "PALSU/DIEDIT"
-        raw_auth["is_suspicious"] = True
-        raw_auth["confidence_score"] = 0.0
-        warning_flags = list(raw_auth.get("warning_flags") or [])
-        if "unknown_doc_type" not in warning_flags:
-            warning_flags.insert(0, "unknown_doc_type")
-        raw_auth["warning_flags"] = warning_flags
-
-        fake_evidence = list(raw_auth.get("fake_evidence") or [])
-        fake_evidence.insert(
-            0,
-            "[BUKTI - DOKUMEN TIDAK TERKLASIFIKASI] "
-            "Dokumen tidak dikenali sebagai invoice atau receipt, sehingga tidak dapat "
-            "divalidasi sebagai dokumen perjalanan dinas yang autentik.",
-        )
-        raw_auth["fake_evidence"] = fake_evidence
-        raw_auth["analysis_notes"] = (
-            "Dokumen tidak dikenali sebagai invoice atau receipt. "
-            "Status authenticity dipaksa tidak autentik untuk kebutuhan verifikasi."
-        )
-
-        result = TravelDocumentResult(
-            doc_type="unknown",
-            document_subtype="unknown",
-            authenticity=DocumentAuthenticity(**raw_auth),
-            extraction_confidence=0.0,
-            requires_manual_review=True,
-            review_reasons=["Dokumen tidak dikenali sebagai invoice atau receipt."],
-            summary="Dokumen tidak terklasifikasi. Tidak ada data yang diekstraksi.",
-        )
-        await update_job(trx_id, status="success", result_json=result.model_dump())
-    except Exception as exc:
-        logger.exception("persist_unknown gagal untuk trx %s", trx_id)
         await update_job(trx_id, status="fail", error_message=str(exc))
 
 

@@ -8,7 +8,7 @@ OUTPUT WAJIB:
 - Semua field schema harus tetap ada. Jika tidak tersedia atau tidak relevan, isi default:
   string="-", number=0.0, integer=0, boolean=false, list=[].
 - Gunakan `doc_type` sesuai kategori publik: "invoice", "receipt", atau "unknown".
-- Gunakan `document_subtype`: "hotel", "flight", "general", atau "unknown".
+- Gunakan `document_subtype`: "hotel", "flight", atau "unknown".
 - Jika dokumen bukan invoice, receipt, faktur, struk, kwitansi, bukti bayar,
   booking confirmation, atau e-ticket, gunakan doc_type="unknown",
   document_subtype="unknown", semua field ekstraksi default, extraction_confidence=0.0,
@@ -41,42 +41,89 @@ ATURAN NILAI:
 - `requires_manual_review`: true jika authenticity.is_suspicious=true,
   total_payment > 10000000, atau data penting tidak terbaca.
 - `summary`: ringkasan singkat berisi pihak utama, tanggal/rute/kamar jika ada,
-  total_payment, dan verdict authenticity.
+        total_payment, dan verdict authenticity.
 """
 
 
-INVOICE_PROMPT = """
-Anda adalah agen verifikasi INVOICE dari dokumen PDF.
-Fokus pada tagihan formal, invoice vendor, faktur, atau invoice hotel.
-Jika dokumen bukan invoice/faktur/tagihan, kembalikan doc_type="unknown".
-Untuk invoice hotel, isi juga field hotel dan gunakan document_subtype="hotel".
-Untuk invoice non-hotel, gunakan document_subtype="general".
+DOCUMENT_PROMPT = """
+Anda adalah kepala agent verifikasi dokumen PDF.
+
+Tugas utama:
+1. Panggil tool `analyze_document` satu kali dengan file_path dari user.
+2. Baca `full_text` dari tool.
+3. Tentukan tipe dokumen dari isi PDF, lalu ekstrak data ke schema `TravelDocumentResult`.
+
+KLASIFIKASI `doc_type`:
+- Gunakan "invoice" untuk dokumen tagihan/faktur/kewajiban bayar. Sinyal kuat:
+  invoice number, nomor faktur, vendor, buyer/customer, line item tagihan,
+  subtotal, pajak, total tagihan, due date, payment terms, amount due.
+- Gunakan "receipt" untuk dokumen bukti pembayaran/transaksi selesai. Sinyal kuat:
+  receipt number, nomor transaksi, struk, kwitansi, bukti bayar, payment method,
+  payment status paid/lunas/settled/success, tanggal transaksi/pembayaran,
+  merchant, payer/customer, total pembayaran.
+- Gunakan "unknown" jika dokumen bukan invoice atau receipt, misalnya panduan teknis,
+  manual, CV, surat, presentasi, kontrak umum, atau dokumen yang tidak memuat bukti
+  tagihan/pembayaran yang cukup.
+- Jangan mengklasifikasikan dokumen hanya karena ada kata lemah seperti payment,
+  VAT, pajak, private, atau provider name tanpa struktur invoice/receipt yang jelas.
+
+KLASIFIKASI `document_subtype`:
+- Gunakan "hotel" jika isi dokumen terkait hotel/penginapan/kamar/check-in/check-out.
+- Gunakan "flight" jika isi dokumen terkait penerbangan/tiket pesawat/airline/rute.
+- Gunakan "unknown" jika tidak terkait hotel atau flight.
+
+ATURAN PENTING:
+- Invoice tidak berarti hotel.
+- Receipt tidak berarti flight.
+- `doc_type` dan `document_subtype` harus berasal dari isi PDF.
+- Gunakan `hotel_detail_agent` hanya jika `document_subtype="hotel"`.
+- Gunakan `flight_detail_agent` hanya jika `document_subtype="flight"`.
+- Jangan panggil helper agent jika `document_subtype="unknown"` atau `doc_type="unknown"`.
+- Saat memanggil helper agent, kirim `file_path` yang sama dan konteks singkat dari hasil
+  `analyze_document`; gabungkan output helper ke JSON final, tetapi jangan biarkan helper
+  mengubah `doc_type`.
+- Jika `doc_type="unknown"`, isi semua field ekstraksi dengan default, gunakan
+  `document_subtype="unknown"`, `extraction_confidence=0.0`,
+  `requires_manual_review=true`, dan jelaskan alasan di `review_reasons`/`summary`.
 """ + UNIFIED_OUTPUT_RULES
 
 
-RECEIPT_PROMPT = """
-Anda adalah agen verifikasi RECEIPT atau bukti pembayaran dari dokumen PDF.
-Fokus pada bukti bayar, struk, booking confirmation, atau e-ticket.
-Jika dokumen bukan receipt/bukti bayar/struk/kwitansi/booking confirmation/e-ticket,
-kembalikan doc_type="unknown".
-Untuk tiket pesawat, isi juga field flight dan gunakan document_subtype="flight".
-Untuk receipt non-flight, gunakan document_subtype="general".
+HOTEL_TOOL_PROMPT = """
+Anda adalah helper agent khusus detail hotel/penginapan.
+
+Tugas:
+- Panggil `analyze_document` jika input menyediakan file_path.
+- Ekstrak hanya field hotel dan biaya yang terlihat jelas dari PDF.
+- Fokus pada: hotel_name, hotel_address, hotel_city, hotel_phone, room_type,
+  total_rooms, room_capacity, check_in_date, check_in_time, check_out_date,
+  check_out_time, total_nights, breakfast_included, facilities, special_requests,
+  order_id, order_detail_id, booking_date, booker_name, booker_email, booker_phone.
+- Jika ada komponen biaya hotel yang jelas, isi subtotal, discount, tax, service_fee,
+  total_payment, currency.
+- Jangan menentukan atau mengubah doc_type. Jika perlu mengisi doc_type untuk schema,
+  salin dari konteks input; jika tidak ada, gunakan "unknown".
+- Gunakan document_subtype="hotel".
+- Jika dokumen tidak berisi detail hotel, kembalikan JSON valid dengan field default,
+  document_subtype="unknown", extraction_confidence=0.0, dan review_reasons yang jelas.
+- Output akhir harus hanya JSON valid sesuai schema TravelDocumentResult.
 """ + UNIFIED_OUTPUT_RULES
 
 
-FLIGHT_SINGLE = """
-Anda adalah agen verifikasi TIKET PESAWAT dari dokumen PDF.
-Isi field flight selengkap mungkin dan gunakan:
-- doc_type="receipt"
-- document_subtype="flight"
-Field hotel dan invoice yang tidak relevan tetap harus ada dengan default kosong.
-""" + UNIFIED_OUTPUT_RULES
+FLIGHT_TOOL_PROMPT = """
+Anda adalah helper agent khusus detail penerbangan/tiket pesawat.
 
-
-HOTEL_SINGLE = """
-Anda adalah agen verifikasi INVOICE HOTEL dari dokumen PDF.
-Isi field hotel selengkap mungkin dan gunakan:
-- doc_type="invoice"
-- document_subtype="hotel"
-Field flight dan invoice/receipt umum yang tidak relevan tetap harus ada dengan default kosong.
+Tugas:
+- Panggil `analyze_document` jika input menyediakan file_path.
+- Ekstrak hanya field flight dan biaya yang terlihat jelas dari PDF.
+- Fokus pada: po_number, transaction_status, traveler_name, traveler_email,
+  traveler_phone, airline, route_from, route_to, flight_date, seat_class,
+  passenger_type, ticket_price, addons.
+- Jika ada komponen biaya penerbangan yang jelas, isi subtotal, discount, tax,
+  service_fee, total_payment, currency.
+- Jangan menentukan atau mengubah doc_type. Jika perlu mengisi doc_type untuk schema,
+  salin dari konteks input; jika tidak ada, gunakan "unknown".
+- Gunakan document_subtype="flight".
+- Jika dokumen tidak berisi detail penerbangan, kembalikan JSON valid dengan field default,
+  document_subtype="unknown", extraction_confidence=0.0, dan review_reasons yang jelas.
+- Output akhir harus hanya JSON valid sesuai schema TravelDocumentResult.
 """ + UNIFIED_OUTPUT_RULES

@@ -17,7 +17,10 @@ def _path_from_env(name: str, default: Path) -> Path:
     return path if path.is_absolute() else PROJECT_ROOT / path
 
 
-APP_ENV: Literal["development", "production"] = os.getenv("APP_ENV", "development")  # type: ignore[assignment]
+APP_ENV: Literal["development", "production"] = os.getenv(  # type: ignore[assignment]
+    "APP_ENV",
+    "development",
+)
 IS_PRODUCTION: bool = APP_ENV == "production"
 
 ENABLE_DOCS: bool = os.getenv("ENABLE_DOCS", "1").lower() not in ("0", "false", "no")
