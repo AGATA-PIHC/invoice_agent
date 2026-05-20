@@ -71,11 +71,32 @@ _INVOICE_KEYWORDS = frozenset({
     "invoice", "faktur", "tagihan", "ppn", "vat", "npwp",
     "nomor faktur", "jatuh tempo", "due date",
 })
+_INVOICE_STRONG_KEYWORDS = frozenset({
+    "invoice", "faktur", "tagihan", "ppn", "npwp", "nomor faktur", "jatuh tempo",
+})
 _RECEIPT_KEYWORDS = frozenset({
     "receipt", "struk", "bukti bayar", "kwitansi", "e-tiket", "e-ticket",
     "booking confirmation", "payment confirmation", "lunas", "paid",
 })
+_RECEIPT_STRONG_KEYWORDS = frozenset({
+    "receipt", "struk", "bukti bayar", "kwitansi", "e-tiket", "e-ticket",
+    "booking confirmation", "payment confirmation",
+})
 _TRANSPORT_PROVIDERS = frozenset({"airasia", "garuda", "lion_air", "kai"})
+
+
+def _keyword_matches(text: str, keywords: frozenset[str]) -> set[str]:
+    """Find keywords as tokens/phrases, not arbitrary substrings.
+
+    This avoids false positives such as invoice keyword "vat" matching
+    ordinary words like "private".
+    """
+    matches: set[str] = set()
+    for keyword in keywords:
+        escaped = re.escape(keyword).replace(r"\ ", r"\s+")
+        if re.search(rf"(?<!\w){escaped}(?!\w)", text):
+            matches.add(keyword)
+    return matches
 
 
 def _detect_by_provider(pdf_text: str) -> Literal["invoice", "receipt", "unknown"]:
@@ -96,8 +117,8 @@ def _detect_by_provider(pdf_text: str) -> Literal["invoice", "receipt", "unknown
 def classify_document(filename: str, file_path: str) -> Literal["invoice", "receipt", "unknown"]:
     """Classify PDF without any LLM call. Returns 'invoice', 'receipt', or 'unknown'."""
     name = filename.lower()
-    inv_score = sum(1 for k in _INVOICE_KEYWORDS if k in name)
-    rec_score = sum(1 for k in _RECEIPT_KEYWORDS if k in name)
+    inv_matches = _keyword_matches(name, _INVOICE_KEYWORDS)
+    rec_matches = _keyword_matches(name, _RECEIPT_KEYWORDS)
     pdf_text = ""
 
     try:
@@ -112,14 +133,25 @@ def classify_document(filename: str, file_path: str) -> Literal["invoice", "rece
     except Exception:
         logger.warning("PDF peek failed for classify_document(%s)", filename)
 
-    inv_score += sum(1 for k in _INVOICE_KEYWORDS if k in pdf_text)
-    rec_score += sum(1 for k in _RECEIPT_KEYWORDS if k in pdf_text)
+    inv_matches |= _keyword_matches(pdf_text, _INVOICE_KEYWORDS)
+    rec_matches |= _keyword_matches(pdf_text, _RECEIPT_KEYWORDS)
+    inv_score = len(inv_matches)
+    rec_score = len(rec_matches)
+    has_strong_inv = bool(inv_matches & _INVOICE_STRONG_KEYWORDS)
+    has_strong_rec = bool(rec_matches & _RECEIPT_STRONG_KEYWORDS)
 
     if inv_score == 0 and rec_score == 0:
         return _detect_by_provider(pdf_text) if pdf_text else "unknown"
 
+    if not has_strong_inv and not has_strong_rec:
+        return _detect_by_provider(pdf_text) if pdf_text else "unknown"
+
     if inv_score != rec_score:
-        return "invoice" if inv_score > rec_score else "receipt"
+        if inv_score > rec_score and has_strong_inv:
+            return "invoice"
+        if rec_score > inv_score and has_strong_rec:
+            return "receipt"
+        return _detect_by_provider(pdf_text) if pdf_text else "unknown"
 
     if pdf_text:
         provider_type = _detect_by_provider(pdf_text)
@@ -574,6 +606,114 @@ def _extract_set_model_response(event) -> dict | None:
     return None
 
 
+_EMPTY_STRINGS = {"", "-", "-  ", "n/a", "none", "null", "tidak ada", "not available"}
+_NON_TRAVEL_DOC_MARKERS = (
+    "not an invoice",
+    "not a receipt",
+    "not invoice",
+    "not receipt",
+    "not an invoice/receipt",
+    "not invoice/receipt",
+    "bukan invoice",
+    "bukan receipt",
+    "bukan faktur",
+    "bukan struk",
+    "bukan kwitansi",
+    "technical guide",
+    "panduan",
+    "guidance",
+)
+_INVOICE_EVIDENCE_FIELDS = (
+    "invoice_number",
+    "issue_date",
+    "due_date",
+    "vendor_name",
+    "vendor_npwp",
+    "buyer_name",
+    "payment_terms",
+    "provider",
+    "provider_company",
+)
+_RECEIPT_EVIDENCE_FIELDS = (
+    "receipt_number",
+    "transaction_date",
+    "payment_date",
+    "merchant_name",
+    "payer_name",
+    "payment_status",
+    "provider",
+    "provider_company",
+)
+_HOTEL_EVIDENCE_FIELDS = (
+    "order_id",
+    "booking_date",
+    "hotel_name",
+    "check_in_date",
+    "check_out_date",
+)
+_FLIGHT_EVIDENCE_FIELDS = (
+    "po_number",
+    "transaction_status",
+    "traveler_name",
+    "airline",
+    "route_from",
+    "route_to",
+    "flight_date",
+)
+
+
+def _has_value(value) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return value.strip().lower() not in _EMPTY_STRINGS
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, list):
+        return bool(value)
+    return bool(value)
+
+
+def _agent_rejects_claimed_doc_type(result: dict, doc_type: str, sub_type: str | None) -> bool:
+    text_parts = [str(result.get("summary") or "")]
+    text_parts.extend(str(item) for item in result.get("review_reasons") or [])
+    joined_text = " ".join(text_parts).lower()
+    if not any(marker in joined_text for marker in _NON_TRAVEL_DOC_MARKERS):
+        return False
+
+    evidence_source = (
+        _INVOICE_EVIDENCE_FIELDS if doc_type == "invoice" else _RECEIPT_EVIDENCE_FIELDS
+    )
+    evidence_fields = list(evidence_source)
+    if sub_type == "hotel":
+        evidence_fields.extend(_HOTEL_EVIDENCE_FIELDS)
+    elif sub_type == "flight":
+        evidence_fields.extend(_FLIGHT_EVIDENCE_FIELDS)
+
+    has_document_evidence = any(_has_value(result.get(field)) for field in evidence_fields)
+    has_amount_evidence = any(
+        _has_value(result.get(field))
+        for field in ("subtotal", "tax", "service_fee", "total_payment")
+    )
+    return not has_document_evidence and not has_amount_evidence
+
+
+def _mark_unknown_result(result: dict) -> dict:
+    result = dict(result)
+    result["doc_type"] = "unknown"
+    result["document_subtype"] = "unknown"
+    result["extraction_confidence"] = 0.0
+    result["requires_manual_review"] = True
+    review_reasons = list(result.get("review_reasons") or [])
+    reason = "Dokumen tidak dikenali sebagai invoice atau receipt."
+    if reason not in review_reasons:
+        review_reasons.insert(0, reason)
+    result["review_reasons"] = review_reasons
+    if not _has_value(result.get("summary")):
+        result["summary"] = "Dokumen tidak terklasifikasi. Tidak ada data yang diekstraksi."
+    return result
+
+
 def _validate_agent_result(
     result: dict,
     doc_type: str,
@@ -582,8 +722,14 @@ def _validate_agent_result(
     if not isinstance(result, dict) or set(result) == {"raw"}:
         raise ValueError("Agent did not return a valid JSON object matching the expected schema.")
 
-    result["doc_type"] = doc_type
-    result["document_subtype"] = sub_type or "general"
+    if (
+        doc_type in ("invoice", "receipt")
+        and _agent_rejects_claimed_doc_type(result, doc_type, sub_type)
+    ):
+        result = _mark_unknown_result(result)
+    else:
+        result["doc_type"] = doc_type
+        result["document_subtype"] = sub_type or "general"
     validated = TravelDocumentResult.model_validate(result).model_dump()
     return validated
 

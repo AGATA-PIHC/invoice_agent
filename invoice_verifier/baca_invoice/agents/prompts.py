@@ -7,8 +7,12 @@ OUTPUT WAJIB:
 - Output akhir harus HANYA JSON yang valid dan sesuai schema Pydantic `TravelDocumentResult`.
 - Semua field schema harus tetap ada. Jika tidak tersedia atau tidak relevan, isi default:
   string="-", number=0.0, integer=0, boolean=false, list=[].
-- Gunakan `doc_type` sesuai kategori publik: "invoice" atau "receipt".
-- Gunakan `document_subtype`: "hotel", "flight", atau "general".
+- Gunakan `doc_type` sesuai kategori publik: "invoice", "receipt", atau "unknown".
+- Gunakan `document_subtype`: "hotel", "flight", "general", atau "unknown".
+- Jika dokumen bukan invoice, receipt, faktur, struk, kwitansi, bukti bayar,
+  booking confirmation, atau e-ticket, gunakan doc_type="unknown",
+  document_subtype="unknown", semua field ekstraksi default, extraction_confidence=0.0,
+  requires_manual_review=true, dan jelaskan alasan di review_reasons/summary.
 - Jangan pakai markdown, komentar, atau teks penjelasan di luar JSON.
 
 FIELD UTAMA SCHEMA GABUNGAN:
@@ -44,6 +48,7 @@ ATURAN NILAI:
 INVOICE_PROMPT = """
 Anda adalah agen verifikasi INVOICE dari dokumen PDF.
 Fokus pada tagihan formal, invoice vendor, faktur, atau invoice hotel.
+Jika dokumen bukan invoice/faktur/tagihan, kembalikan doc_type="unknown".
 Untuk invoice hotel, isi juga field hotel dan gunakan document_subtype="hotel".
 Untuk invoice non-hotel, gunakan document_subtype="general".
 """ + UNIFIED_OUTPUT_RULES
@@ -52,6 +57,8 @@ Untuk invoice non-hotel, gunakan document_subtype="general".
 RECEIPT_PROMPT = """
 Anda adalah agen verifikasi RECEIPT atau bukti pembayaran dari dokumen PDF.
 Fokus pada bukti bayar, struk, booking confirmation, atau e-ticket.
+Jika dokumen bukan receipt/bukti bayar/struk/kwitansi/booking confirmation/e-ticket,
+kembalikan doc_type="unknown".
 Untuk tiket pesawat, isi juga field flight dan gunakan document_subtype="flight".
 Untuk receipt non-flight, gunakan document_subtype="general".
 """ + UNIFIED_OUTPUT_RULES
