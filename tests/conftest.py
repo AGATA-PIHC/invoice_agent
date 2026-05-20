@@ -21,8 +21,8 @@ _STUB_MODS = [
     # Only stub the submodules that pull in google-adk or fitz at import time.
     "baca_invoice.agent",
     "baca_invoice.agents",
-    "baca_invoice.agents.flight", "baca_invoice.agents.formatter", "baca_invoice.agents.hotel",
-    "baca_invoice.agents.invoice", "baca_invoice.agents.receipt",
+    "baca_invoice.agents.document", "baca_invoice.agents.prompts",
+    "baca_invoice.agents.postprocess",
     "baca_invoice.tools", "baca_invoice.tools.constants",
     "baca_invoice.tools.combined", "baca_invoice.tools.authenticity",
     "baca_invoice.tools.pdf",
@@ -55,18 +55,8 @@ class MockRunnerService:
     def __init__(self):
         self._jobs: dict[str, Job] = {}
 
-    def create_job(
-        self,
-        job_id: str,
-        file_path: str,
-        filename: str,
-        doc_type: str = "invoice",
-        sub_type: str | None = None,
-    ):
-        self._jobs[job_id] = Job(
-            job_id=job_id, filename=filename, file_path=file_path,
-            doc_type=doc_type, sub_type=sub_type,
-        )
+    def create_job(self, job_id: str, file_path: str, filename: str) -> None:
+        self._jobs[job_id] = Job(job_id=job_id, filename=filename, file_path=file_path)
 
     def get_job(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
@@ -76,7 +66,6 @@ class MockRunnerService:
         if job:
             job.status = JobStatus.DONE
             job.result = {"verdict": "AUTENTIK", "summary": "Test OK", "total_payment": 0.0}
-            job.push({"type": "complete", "result": job.result})
 
     async def eviction_loop(self) -> None:
         await asyncio.sleep(86400)
@@ -97,18 +86,27 @@ def mock_runner():
 
 @pytest.fixture
 def stub_classify(monkeypatch):
-    """Stub both classifiers so minimal test PDFs pass without real PDF parsing."""
-    monkeypatch.setattr("web.api.v1_upload.classify_document", lambda fn, fp: "invoice")
-    monkeypatch.setattr("web.api.v1_upload.classify_sub_type", lambda fn, fp: "hotel")
+    """Stub classifier(s) jika modul masih punya symbol-nya (kompat refactor)."""
+    import web.api.v1_upload as m
+    for attr, value in (
+        ("classify_document", lambda fn, fp: "invoice"),
+        ("classify_sub_type", lambda fn, fp: "hotel"),
+    ):
+        if hasattr(m, attr):
+            monkeypatch.setattr(f"web.api.v1_upload.{attr}", value)
 
 
 @pytest.fixture(autouse=True)
 def clear_rate_limiter():
     """Reset the in-process rate-limit counters between tests."""
-    import web.api.v1_upload as m
-    m._ip_timestamps.clear()
+    try:
+        from web.services.rate_limit import _upload_limiter
+    except ImportError:
+        yield
+        return
+    _upload_limiter._timestamps.clear()
     yield
-    m._ip_timestamps.clear()
+    _upload_limiter._timestamps.clear()
 
 
 @pytest.fixture
