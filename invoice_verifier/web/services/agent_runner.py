@@ -321,7 +321,9 @@ class AgentRunnerService:
                         )
 
                 if job.result is None:
-                    raise ValueError("Agent finished without returning a validated extraction result.")
+                    raise ValueError(
+                        "Agent finished without returning a validated extraction result."
+                    )
 
                 job.status = JobStatus.DONE
                 job.push({"type": "complete", "result": job.result})

@@ -2,7 +2,6 @@ from google.adk.agents import LlmAgent
 
 from ..models.travel_document import TravelDocumentResult
 
-
 FORMATTER_PROMPT = """
 Anda adalah formatter schema hasil ekstraksi dokumen perjalanan.
 

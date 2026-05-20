@@ -5,7 +5,12 @@ import os
 # ── Stub heavy optional dependencies before any web.* import ──────────────
 import sys
 import tempfile
+from pathlib import Path
 from unittest.mock import MagicMock
+
+_APP_ROOT = Path(__file__).resolve().parents[1] / "invoice_verifier"
+if str(_APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(_APP_ROOT))
 
 _STUB_MODS = [
     "fitz",
@@ -16,7 +21,7 @@ _STUB_MODS = [
     # Only stub the submodules that pull in google-adk or fitz at import time.
     "baca_invoice.agent",
     "baca_invoice.agents",
-    "baca_invoice.agents.flight", "baca_invoice.agents.hotel",
+    "baca_invoice.agents.flight", "baca_invoice.agents.formatter", "baca_invoice.agents.hotel",
     "baca_invoice.agents.invoice", "baca_invoice.agents.receipt",
     "baca_invoice.tools", "baca_invoice.tools.constants",
     "baca_invoice.tools.combined", "baca_invoice.tools.authenticity",
