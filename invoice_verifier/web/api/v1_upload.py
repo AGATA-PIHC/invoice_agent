@@ -119,7 +119,7 @@ async def upload_document(
         ) from e
 
     if doc_type == "unknown":
-        logger.info("trx %s: doc_type unknown — skip AI, kembalikan UnknownResult", trx_id)
+        logger.info("trx %s: doc_type unknown — skip AI, kembalikan TravelDocumentResult", trx_id)
         task = asyncio.create_task(_persist_unknown(trx_id, resolved_path))
         _background_tasks.add(task)
         task.add_done_callback(_background_tasks.discard)
@@ -172,7 +172,7 @@ async def _run_and_persist(trx_id: str, runner_service) -> None:
 async def _persist_unknown(trx_id: str, file_path: str) -> None:
     try:
         from baca_invoice.models.authenticity import DocumentAuthenticity
-        from baca_invoice.models.unknown import UnknownResult
+        from baca_invoice.models.travel_document import TravelDocumentResult
         from baca_invoice.tools.authenticity import analyze_document_authenticity
 
         raw_auth = analyze_document_authenticity(file_path)
@@ -197,7 +197,15 @@ async def _persist_unknown(trx_id: str, file_path: str) -> None:
             "Status authenticity dipaksa tidak autentik untuk kebutuhan verifikasi."
         )
 
-        result = UnknownResult(authenticity=DocumentAuthenticity(**raw_auth))
+        result = TravelDocumentResult(
+            doc_type="unknown",
+            document_subtype="unknown",
+            authenticity=DocumentAuthenticity(**raw_auth),
+            extraction_confidence=0.0,
+            requires_manual_review=True,
+            review_reasons=["Dokumen tidak dikenali sebagai invoice atau receipt."],
+            summary="Dokumen tidak terklasifikasi. Tidak ada data yang diekstraksi.",
+        )
         await update_job(trx_id, status="success", result_json=result.model_dump())
     except Exception as exc:
         logger.exception("persist_unknown gagal untuk trx %s", trx_id)
@@ -250,11 +258,20 @@ async def get_extract(
             data=None,
         )
 
+    result_json = record.get("result_json")
+    if result_json is None:
+        return ExtractResponse(
+            trx_id=trx_id,
+            status="fail",
+            message="Ekstraksi selesai tanpa hasil valid. Silakan upload ulang dokumen.",
+            data=None,
+        )
+
     return ExtractResponse(
         trx_id=trx_id,
         status="success",
         message="Ekstraksi berhasil.",
-        data=record.get("result_json"),
+        data=result_json,
     )
 
 

@@ -14,9 +14,11 @@ from pathlib import Path
 from typing import Literal
 
 from baca_invoice.agents.flight import flight_agent
+from baca_invoice.agents.formatter import formatter_agent
 from baca_invoice.agents.hotel import hotel_agent
 from baca_invoice.agents.invoice import invoice_agent
 from baca_invoice.agents.receipt import receipt_agent
+from baca_invoice.models.travel_document import TravelDocumentResult
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types as genai_types
@@ -202,6 +204,11 @@ class AgentRunnerService:
             agent=flight_agent,
             session_service=self._session_service,
         )
+        self._formatter_runner = Runner(
+            app_name=APP_NAME,
+            agent=formatter_agent,
+            session_service=self._session_service,
+        )
         self._jobs: dict[str, Job] = {}
         self._lock = asyncio.Lock()
         self._semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
@@ -287,14 +294,34 @@ class AgentRunnerService:
                     for mapped in _map_event(event):
                         job.push(mapped)
 
+                    structured_result = _extract_set_model_response(event)
+                    if structured_result is not None:
+                        job.result = _validate_agent_result(
+                            structured_result,
+                            doc_type=job.doc_type,
+                            sub_type=effective_sub_type,
+                        )
+                        continue
+
                     if event.is_final_response() and event.content and event.content.parts:
                         raw_text = _extract_text(event.content.parts)
                         parsed = _parse_json_result(raw_text)
                         result = _unwrap_agent_result(parsed)
-                        # Pastikan doc_type stage-1 selalu ada di output
-                        if isinstance(result, dict):
-                            result.setdefault("doc_type", job.doc_type)
-                        job.result = result
+                        validated = _validate_agent_result(
+                            result,
+                            doc_type=job.doc_type,
+                            sub_type=effective_sub_type,
+                        )
+                        job.result = await self._format_with_output_schema(
+                            validated,
+                            doc_type=job.doc_type,
+                            sub_type=effective_sub_type,
+                            user_id=user_id,
+                            session_id=f"{session_id}_formatter",
+                        )
+
+                if job.result is None:
+                    raise ValueError("Agent finished without returning a validated extraction result.")
 
                 job.status = JobStatus.DONE
                 job.push({"type": "complete", "result": job.result})
@@ -310,6 +337,40 @@ class AgentRunnerService:
 
             finally:
                 _cleanup_file(job)
+
+    async def _format_with_output_schema(
+        self,
+        result: dict,
+        doc_type: str,
+        sub_type: str | None,
+        user_id: str,
+        session_id: str,
+    ) -> dict:
+        await self._session_service.create_session(
+            app_name=APP_NAME,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        message = genai_types.Content(
+            role="user",
+            parts=[genai_types.Part(text=json.dumps(result, ensure_ascii=False))],
+        )
+
+        formatted: dict | None = None
+        async for event in self._formatter_runner.run_async(
+            user_id=user_id,
+            session_id=session_id,
+            new_message=message,
+        ):
+            if event.is_final_response() and event.content and event.content.parts:
+                raw_text = _extract_text(event.content.parts)
+                parsed = _parse_json_result(raw_text)
+                formatted = _unwrap_agent_result(parsed)
+
+        if formatted is None:
+            raise ValueError("Schema formatter finished without returning a validated result.")
+
+        return _validate_agent_result(formatted, doc_type=doc_type, sub_type=sub_type)
 
     async def stream_events(
         self,
@@ -495,6 +556,34 @@ def _unwrap_agent_result(data: dict) -> dict:
     if key.endswith("_response") and isinstance(data[key], dict):
         return data[key]
     return data
+
+
+def _extract_set_model_response(event) -> dict | None:
+    if not hasattr(event, "get_function_responses"):
+        return None
+    for response in event.get_function_responses() or []:
+        if response.name != "set_model_response":
+            continue
+        data = response.response
+        if isinstance(data, dict) and isinstance(data.get("result"), dict):
+            return data["result"]
+        if isinstance(data, dict):
+            return data
+    return None
+
+
+def _validate_agent_result(
+    result: dict,
+    doc_type: str,
+    sub_type: str | None,
+) -> dict:
+    if not isinstance(result, dict) or set(result) == {"raw"}:
+        raise ValueError("Agent did not return a valid JSON object matching the expected schema.")
+
+    result["doc_type"] = doc_type
+    result["document_subtype"] = sub_type or "general"
+    validated = TravelDocumentResult.model_validate(result).model_dump()
+    return validated
 
 
 def _sse(data: dict) -> str:

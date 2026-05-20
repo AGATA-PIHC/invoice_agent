@@ -1,13 +1,12 @@
 from .authenticity import DocumentAuthenticity
-from .invoice import InvoiceLineItem, InvoiceResult
-from .receipt import ReceiptItem, ReceiptResult
+from .travel_document import AddonItem, InvoiceLineItem, ReceiptItem, TravelDocumentResult
 from .unknown import UnknownResult
 
 __all__ = [
     "DocumentAuthenticity",
-    "InvoiceResult",
+    "TravelDocumentResult",
     "InvoiceLineItem",
-    "ReceiptResult",
     "ReceiptItem",
+    "AddonItem",
     "UnknownResult",
 ]
