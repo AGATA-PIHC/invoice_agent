@@ -176,6 +176,27 @@ async def _persist_unknown(trx_id: str, file_path: str) -> None:
         from baca_invoice.tools.authenticity import analyze_document_authenticity
 
         raw_auth = analyze_document_authenticity(file_path)
+        raw_auth["verdict"] = "PALSU/DIEDIT"
+        raw_auth["is_suspicious"] = True
+        raw_auth["confidence_score"] = 0.0
+        warning_flags = list(raw_auth.get("warning_flags") or [])
+        if "unknown_doc_type" not in warning_flags:
+            warning_flags.insert(0, "unknown_doc_type")
+        raw_auth["warning_flags"] = warning_flags
+
+        fake_evidence = list(raw_auth.get("fake_evidence") or [])
+        fake_evidence.insert(
+            0,
+            "[BUKTI - DOKUMEN TIDAK TERKLASIFIKASI] "
+            "Dokumen tidak dikenali sebagai invoice atau receipt, sehingga tidak dapat "
+            "divalidasi sebagai dokumen perjalanan dinas yang autentik.",
+        )
+        raw_auth["fake_evidence"] = fake_evidence
+        raw_auth["analysis_notes"] = (
+            "Dokumen tidak dikenali sebagai invoice atau receipt. "
+            "Status authenticity dipaksa tidak autentik untuk kebutuhan verifikasi."
+        )
+
         result = UnknownResult(authenticity=DocumentAuthenticity(**raw_auth))
         await update_job(trx_id, status="success", result_json=result.model_dump())
     except Exception as exc:
