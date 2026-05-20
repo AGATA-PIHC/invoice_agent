@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local environments and secrets
+.env
+*.env
+!*.env_example
+baca_invoice/.env
+credentials/
+
+# Runtime state
+.adk/
+**/.adk/
+data/
+tmp_uploads/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Local IDE/agent scaffolding
+.claude/
+.specify/templates/
+web/New Text Document.txt
+
+# OS/editor noise
+.DS_Store
+Thumbs.db

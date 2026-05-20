@@ -27,7 +27,7 @@ class AddonItem(BaseModel):
 
 class TravelDocumentResult(BaseModel):
     doc_type: Literal["invoice", "receipt", "unknown"] = "unknown"
-    document_subtype: Literal["general", "hotel", "flight", "unknown"] = "general"
+    document_subtype: Literal["hotel", "flight", "unknown"] = "unknown"
 
     invoice_number: str = "-"
     issue_date: str = "-"

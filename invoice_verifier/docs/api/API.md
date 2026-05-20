@@ -199,20 +199,16 @@ Sub-schema yang muncul di response semua doc_type:
 
 ---
 
-## 2-Stage Classification
+## Klasifikasi 2 Dimensi
 
-Sistem mengklasifikasikan dokumen dalam 2 tahap independen:
+Sistem mengklasifikasikan dokumen pada 2 dimensi independen, keduanya dikerjakan
+oleh `document_agent` dalam satu LLM call:
 
-1. **Stage 1** — `classify_document()` → `"invoice"` / `"receipt"` / `"unknown"` (jadi `doc_type` di response)
-2. **Stage 2** — `classify_sub_type()` → `"hotel"` / `"flight"` / `None` (routing internal ke agent spesifik)
+1. **`doc_type`** → `"invoice"` / `"receipt"` / `"unknown"` (kategori publik)
+2. **`document_subtype`** → `"hotel"` / `"flight"` / `"unknown"`
 
-Routing agent:
-- `hotel` → `hotel_agent` (extractor invoice hotel)
-- `flight` → `flight_agent` (extractor tiket pesawat)
-- invoice tanpa sub_type → `invoice_agent` (generic)
-- receipt tanpa sub_type → `receipt_agent` (generic)
-
-Field `data.doc_type` di response **selalu** `invoice` / `receipt` / `unknown` — tidak pernah `hotel` / `flight`. Sub-type hanya internal.
+Field `data.doc_type` di response **selalu** `invoice` / `receipt` / `unknown` —
+tidak pernah `hotel` / `flight`. Subtype dilaporkan di `data.document_subtype`.
 
 ---
 
