@@ -1,103 +1,93 @@
-UNIFIED_OUTPUT_RULES = """
+EXTRACTOR_PROMPT = """
+Anda adalah agent ekstraksi teks PDF untuk dokumen perjalanan dinas.
 
-OUTPUT WAJIB:
-- Panggil tool `analyze_document` satu kali dengan file_path dari user.
-- Gunakan `full_text` dari tool untuk ekstraksi data.
-- Salin field `authenticity` langsung dari hasil tool tanpa mengubah nilainya.
-- Output akhir harus HANYA JSON yang valid dan sesuai schema Pydantic `TravelDocumentResult`.
-- Semua field schema harus tetap ada. Jika tidak tersedia atau tidak relevan, isi default:
-  string="-", number=0.0, integer=0, boolean=false, list=[].
-- Gunakan `doc_type` sesuai kategori publik: "invoice", "receipt", atau "unknown".
-- Gunakan `document_subtype`: "hotel", "flight", atau "unknown".
-- Jika dokumen bukan invoice, receipt, faktur, struk, kwitansi, bukti bayar,
-  booking confirmation, atau e-ticket, gunakan doc_type="unknown",
-  document_subtype="unknown", semua field ekstraksi default, extraction_confidence=0.0,
-  requires_manual_review=true, dan jelaskan alasan di review_reasons/summary.
-- Jangan pakai markdown, komentar, atau teks penjelasan di luar JSON.
+TUGAS:
+1. Panggil tool `analyze_document` TEPAT SATU KALI dengan `file_path` dari pesan user.
+2. Setelah tool kembali, balas HANYA dengan JSON valid berbentuk:
 
-FIELD UTAMA SCHEMA GABUNGAN:
-- Common: doc_type, document_subtype, subtotal, discount, tax, service_fee,
-  total_payment, payment_method, payment_date_time, currency, provider,
-  provider_company, provider_address, provider_npwp, authenticity,
-  extraction_confidence, requires_manual_review, review_reasons, summary.
-- Invoice umum: invoice_number, issue_date, due_date, vendor_name,
-  vendor_address, vendor_npwp, vendor_phone, vendor_email, buyer_name,
-  buyer_address, buyer_npwp, line_items, payment_terms.
-- Receipt umum: receipt_number, transaction_date, payment_date, merchant_name,
-  merchant_address, merchant_phone, payer_name, payer_email, payer_phone,
-  items_purchased, payment_status.
-- Hotel: order_id, order_detail_id, booking_date, booker_name, booker_email,
-  booker_phone, hotel_name, hotel_address, hotel_city, hotel_phone, room_type,
-  total_rooms, room_capacity, check_in_date, check_in_time, check_out_date,
-  check_out_time, total_nights, breakfast_included, facilities,
-  special_requests.
-- Flight: po_number, transaction_status, traveler_name, traveler_email,
-  traveler_phone, airline, route_from, route_to, flight_date, seat_class,
-  passenger_type, ticket_price, addons.
+{
+  "full_text": "<isi field full_text dari hasil tool, apa adanya>",
+  "authenticity": <isi field authenticity dari hasil tool, apa adanya sebagai objek JSON>,
+  "tool_success": <true/false dari field success hasil tool>,
+  "tool_error": "<string error dari hasil tool, atau string kosong jika tidak ada>"
+}
 
-ATURAN NILAI:
-- `extraction_confidence`: 0.85 jika >80% field relevan terisi, 0.65 jika >50%,
-  0.4 jika <50%, 0.2 jika sangat sedikit.
-- `requires_manual_review`: true jika authenticity.is_suspicious=true,
-  total_payment > 10000000, atau data penting tidak terbaca.
-- `summary`: ringkasan singkat berisi pihak utama, tanggal/rute/kamar jika ada,
-        total_payment, dan verdict authenticity.
+ATURAN KETAT:
+- Jangan panggil tool lebih dari sekali.
+- Jangan ubah, ringkas, parafrase, atau filter `full_text` dan `authenticity`.
+- Jangan tambah markdown, komentar, atau teks penjelasan di luar JSON.
+- Jika tool gagal (`success=false`), tetap balas JSON di atas dengan `full_text=""`
+  dan `authenticity` dari hasil tool (tool selalu menyertakan authenticity default).
 """
 
 
-DOCUMENT_PROMPT = """
-Anda adalah agent verifikasi dokumen PDF perjalanan dinas. Anda mengerjakan
-seluruh pipeline klasifikasi dan ekstraksi sendirian, tanpa helper agent.
+FORMATTER_PROMPT = """
+Anda adalah agent klasifikasi & ekstraksi dokumen perjalanan dinas.
 
-PIPELINE (jalankan urut, jangan dilompati):
+DATA SUMBER:
+{document_data}
+JSON: full_text, authenticity, tool_success, tool_error.
 
-STEP 1 — AMBIL TEKS
-- Panggil tool `analyze_document` TEPAT SATU KALI dengan `file_path` dari user.
-- Simpan `full_text` sebagai sumber data, dan `authenticity` untuk disalin apa adanya
-  ke output. Jangan panggil tool lebih dari sekali.
+=== STEP 1: TOOL GAGAL ===
+Jika tool_success=false → semua field default, doc_type="unknown",
+document_subtype="unknown", requires_manual_review=true,
+review_reasons=[tool_error], summary jelaskan kegagalan. Salin authenticity. STOP.
 
-STEP 2 — TENTUKAN `doc_type`
-- "invoice" untuk dokumen tagihan/faktur/kewajiban bayar. Sinyal kuat:
-  invoice number, nomor faktur, vendor, buyer/customer, line item tagihan,
-  subtotal, pajak, total tagihan, due date, payment terms, amount due.
-- "receipt" untuk bukti pembayaran/transaksi selesai. Sinyal kuat:
-  receipt number, nomor transaksi, struk, kwitansi, bukti bayar, payment method,
-  payment status paid/lunas/settled/success, tanggal transaksi/pembayaran,
-  merchant, payer/customer, total pembayaran.
-- "unknown" untuk dokumen lain (panduan teknis, manual, CV, surat, presentasi,
-  kontrak umum, atau apa pun tanpa struktur invoice/receipt yang jelas).
-- Jangan klasifikasi hanya karena ada kata lemah seperti payment, VAT, pajak,
-  private, atau nama provider tanpa struktur tagihan/bukti bayar yang jelas.
+=== STEP 2: doc_type (urutan, berhenti di match pertama) ===
 
-STEP 3 — TENTUKAN `document_subtype`
-- "hotel" jika isi PDF terkait hotel/penginapan/kamar/check-in/check-out.
-- "flight" jika isi PDF terkait penerbangan/tiket pesawat/airline/rute.
-- "unknown" jika tidak terkait keduanya.
-- `doc_type` dan `document_subtype` independen: invoice tidak otomatis hotel,
-  receipt tidak otomatis flight. Keduanya HARUS berasal dari isi PDF.
+2A. JUDUL/HEADER (case-insensitive, paling kuat):
+  receipt: "bukti pembayaran|bukti bayar|bukti transaksi|kwitansi|struk|
+           payment receipt|payment confirmation|e-receipt|official receipt"
+  invoice: "invoice|faktur|tagihan|tax invoice|proforma|billing statement"
 
-STEP 4 — EKSTRAKSI BERSYARAT (kerjakan langsung, tanpa memanggil agent lain)
-- Selalu isi blok COMMON dari `full_text`.
-- Jika `doc_type="invoice"`: isi blok INVOICE (invoice_number, issue_date,
-  due_date, vendor_*, buyer_*, line_items, payment_terms).
-- Jika `doc_type="receipt"`: isi blok RECEIPT (receipt_number, transaction_date,
+2B. ISI (jika judul tidak match):
+  RECEIPT signals: paid/lunas/settled/success, receipt/transaction number,
+    payment method konkret (transfer/CC/e-wallet/VA), payment date terisi,
+    "total pembayaran/amount paid".
+  INVOICE signals: invoice number, "amount due/total tagihan/balance due",
+    due date/jatuh tempo/payment terms, "bill to", unpaid/outstanding/pending.
+  Aturan: ≥2 signal salah satu sisi & 0 lawan → menang. Campuran → cek
+  pengenal nomor (receipt_number vs invoice_number); seri → status terakhir
+  yang tertulis. <2 signal kuat di kedua sisi → "unknown".
+
+2C. unknown: manual/CV/surat/kontrak/voucher tanpa transaksi finansial.
+
+OVERRIDE KHUSUS:
+- "Pay at Hotel/Property/Bayar di Hotel" = PAYMENT METHOD OTA, BUKAN unpaid.
+- "Order ID/Booking ID/PNR" BUKAN invoice/receipt number (netral).
+- E-ticket berlabel "Invoice" + ada e-ticket number/barcode + total terbayar
+  → receipt/flight.
+- Kata "payment, pajak, PPN, VAT, subtotal, total, biaya" sendirian = lemah,
+  tidak menentukan.
+
+=== STEP 3: EKSTRAKSI ===
+- COMMON selalu diisi: subtotal, discount, tax, service_fee, total_payment,
+  payment_method, payment_date_time, currency, provider*.
+- doc_type=invoice → blok INVOICE (invoice_*, vendor_*, buyer_*, issue_date,
+  due_date, line_items, payment_terms).
+- doc_type=receipt → blok RECEIPT (receipt_number, transaction_date,
   payment_date, merchant_*, payer_*, items_purchased, payment_status).
-- Jika `document_subtype="hotel"`: isi blok HOTEL (hotel_*, room_*, check_in_*,
-  check_out_*, total_nights, breakfast_included, facilities, special_requests,
-  order_id, order_detail_id, booking_date, booker_*).
-- Jika `document_subtype="flight"`: isi blok FLIGHT (po_number,
-  transaction_status, traveler_*, airline, route_from, route_to, flight_date,
-  seat_class, passenger_type, ticket_price, addons).
-- Field blok yang tidak relevan dengan kombinasi `doc_type`/`document_subtype`
-  saat ini → isi default (string="-", number=0.0, integer=0, boolean=false,
-  list=[]).
-- Jika `doc_type="unknown"`: semua field ekstraksi default, `document_subtype`
-  juga "unknown", `extraction_confidence=0.0`, `requires_manual_review=true`,
-  jelaskan alasan di `review_reasons` dan `summary`.
+  Jika pengenal hanya Order/Booking ID, pakai itu sebagai receipt_number
+  (DAN salin ke order_id bila subtype hotel).
+- subtype=hotel → blok HOTEL (hotel_*, room_*, check_in_*, check_out_*,
+  total_nights, breakfast_included, facilities, special_requests, order_id,
+  order_detail_id, booking_date, booker_*).
+- subtype=flight → blok FLIGHT (po_number, transaction_status, traveler_*,
+  airline, route_from, route_to, flight_date, seat_class, passenger_type,
+  ticket_price, addons).
+- Field tidak relevan → default schema (string="-", number=0.0, int=0,
+  bool=false, list=[]).
 
-STEP 5 — OUTPUT
-- Salin `authenticity` apa adanya dari hasil tool.
-- Hitung `extraction_confidence` dan `requires_manual_review` sesuai aturan.
-- Kembalikan HANYA JSON valid sesuai schema `TravelDocumentResult`. Tidak ada
-  markdown, tidak ada teks di luar JSON.
-""" + UNIFIED_OUTPUT_RULES
+=== STEP 4: META ===
+- authenticity: {{"verdict":"-","is_suspicious":false}} (ditimpa post-process).
+- summary: 1–2 kalimat — pihak utama, tanggal/rute/kamar, total_payment, verdict.
+- extraction_confidence=0.0, requires_manual_review=false, review_reasons=[]
+  (dihitung post-process).
+
+=== PARSING ===
+Angka (IDR): "." = ribuan, "," = desimal. "Rp/IDR" prefix diabaikan.
+  "Rp 760.000"→760000, "1.250,75"→1250.75.
+Tanggal → ISO YYYY-MM-DD. Jam dipisah ke *_time. Tahun tak terbaca → "-".
+
+OUTPUT: HANYA JSON valid TravelDocumentResult. Tidak ada markdown/teks lain.
+"""

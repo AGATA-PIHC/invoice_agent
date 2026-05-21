@@ -123,6 +123,16 @@ def _mark_unknown_result(result: dict) -> dict:
     result["extraction_confidence"] = 0.0
     result["requires_manual_review"] = True
 
+    authenticity = dict(result.get("authenticity") or {})
+    authenticity["verdict"] = "TIDAK DIVERIFIKASI"
+    authenticity["is_suspicious"] = False
+    authenticity["confidence_score"] = 0.0
+    authenticity["analysis_notes"] = (
+        "Dokumen tidak dikenali sebagai invoice atau receipt perjalanan dinas. "
+        "Analisis keaslian tidak dilakukan."
+    )
+    result["authenticity"] = authenticity
+
     review_reasons = list(result.get("review_reasons") or [])
     reason = "Dokumen tidak dikenali sebagai invoice atau receipt."
     if reason not in review_reasons:

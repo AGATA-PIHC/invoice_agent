@@ -1,31 +1,47 @@
 KNOWN_PROVIDERS: dict[str, dict] = {
     "traveloka": {
         "keywords": ["traveloka", "pt trinusa travelindo", "www.traveloka.com"],
-        "valid_creators": ["skia", "chrome", "chromium", "webkit", "wkhtmltopdf", "iText"],
+        "valid_creators": [
+            "skia",
+            "chrome",
+            "chromium",
+            "webkit",
+            "wkhtmltopdf",
+            "itext",
+            "pdfium",
+        ],
     },
     "tiket.com": {
         "keywords": ["tiket.com", "pt global tiket network", "www.tiket.com"],
-        "valid_creators": ["skia", "chrome", "chromium", "webkit","iText", "wkhtmltopdf"],
+        "valid_creators": [
+            "skia",
+            "chrome",
+            "chromium",
+            "webkit",
+            "itext",
+            "wkhtmltopdf",
+            "pdfium",
+        ],
     },
     "trip.com": {
         "keywords": ["trip.com", "ctrip", "www.trip.com"],
-        "valid_creators": ["skia", "chrome", "chromium", "iText", "webkit"],
+        "valid_creators": ["skia", "chrome", "chromium", "itext", "webkit", "pdfium"],
     },
     "airasia": {
         "keywords": ["airasia", "air asia", "capital a", "www.airasia.com"],
-        "valid_creators": ["skia", "chrome", "chromium", "iText", "webkit"],
+        "valid_creators": ["skia", "chrome", "chromium", "itext", "webkit", "pdfium"],
     },
     "garuda": {
         "keywords": ["garuda indonesia", "pt garuda", "citilink", "www.garuda-indonesia.com"],
-        "valid_creators": ["iText"],
+        "valid_creators": ["itext", "pdfium"],
     },
     "lion_air": {
         "keywords": ["lion air", "pt lion mentari", "batik air", "wings air"],
-        "valid_creators": ["iText"],
+        "valid_creators": ["itext", "pdfium"],
     },
     "kai": {
         "keywords": ["kereta api indonesia", "pt kai", "kai.id", "tiket.kai.id"],
-        "valid_creators": ["skia","iText", "chrome", "chromium", "webkit"],
+        "valid_creators": ["skia", "chrome", "chromium", "webkit", "itext", "pdfium"],
     },
 }
 
