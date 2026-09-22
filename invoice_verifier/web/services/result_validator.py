@@ -5,7 +5,7 @@ from typing import Any
 from baca_invoice.models.travel_document import TravelDocumentResult
 
 _DOC_TYPES = {"invoice", "receipt", "unknown"}
-_SUB_TYPES = {"hotel", "flight", "unknown"}
+_SUB_TYPES = {"hotel", "flight", "train", "ship", "bus", "others", "unknown"}
 
 _EMPTY_STRINGS = {"", "-", "-  ", "n/a", "none", "null", "tidak ada", "not available"}
 
@@ -103,7 +103,7 @@ def _agent_rejects_claimed_doc_type(result: dict, doc_type: str, sub_type: str) 
     if not any(marker in joined_text for marker in _NON_TRAVEL_DOC_MARKERS):
         return False
 
-    evidence_fields = list(
+    evidence_fields: list[str] = list(
         _INVOICE_EVIDENCE_FIELDS if doc_type == "invoice" else _RECEIPT_EVIDENCE_FIELDS
     )
     if sub_type == "hotel":

@@ -36,12 +36,16 @@ class TravelDocumentResult(BaseModel):
             "'unknown' (dokumen lain di luar kedua kategori)."
         ),
     )
-    document_subtype: Literal["hotel", "flight", "unknown"] = Field(
+    document_subtype: Literal[
+        "hotel", "flight", "train", "ship", "bus", "others", "unknown"
+    ] = Field(
         default="unknown",
         description=(
             "Subtype berdasarkan isi: 'hotel' (penginapan/kamar/check-in), "
-            "'flight' (penerbangan/airline/rute), atau 'unknown'. Dievaluasi "
-            "terpisah dari doc_type kecuali doc_type='unknown'."
+            "'flight' (penerbangan/airline/rute), 'train' (kereta), "
+            "'ship' (kapal), 'bus' (bus), 'others' (transportasi atau dokumen "
+            "perjalanan lain), atau 'unknown'. Dievaluasi terpisah dari doc_type "
+            "kecuali doc_type='unknown'."
         ),
     )
 

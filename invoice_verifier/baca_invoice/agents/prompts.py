@@ -75,6 +75,11 @@ OVERRIDE KHUSUS:
 - subtype=flight → blok FLIGHT (po_number, transaction_status, traveler_*,
   airline, route_from, route_to, flight_date, seat_class, passenger_type,
   ticket_price, addons).
+- subtype=train, ship, bus, atau others → gunakan field COMMON dan isi field
+  yang relevan dari dokumen; field khusus hotel/flight yang tidak relevan tetap
+  memakai nilai default schema.
+- Nilai document_subtype yang valid: hotel, flight, train, ship, bus, others,
+  atau unknown.
 - Field tidak relevan → default schema (string="-", number=0.0, int=0,
   bool=false, list=[]).
 

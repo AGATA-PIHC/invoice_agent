@@ -46,7 +46,7 @@ adk_workspace/
 ## Prasyarat
 
 - Python 3.11+
-- Google AI Studio API Key → [aistudio.google.com](https://aistudio.google.com/app/apikey)
+- Google AI Studio API Key → [aistudio.google.com](https://aistudio.google.com/app/apikey), atau kredensial untuk endpoint OpenAI-compatible
 
 ## Instalasi
 
@@ -84,7 +84,14 @@ cp .env.example .env
 Edit `.env`:
 
 ```env
+# Mode default (Gemini)
 GOOGLE_API_KEY=your-google-api-key-here
+
+# Mode OpenAI-compatible (isi tiga nilai ini; tidak perlu GOOGLE_API_KEY)
+OPENAI_BASE_URL=https://your-provider.example.com/v1
+OPENAI_API_KEY=your-api-key-here
+OPENAI_MODEL=your-model-name
+
 APP_ENV=development
 PINTER_API_KEY=your-api-key-here
 ```

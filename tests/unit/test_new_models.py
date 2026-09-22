@@ -19,6 +19,13 @@ def test_receipt_item_defaults():
     assert item.price == 0.0
 
 
+def test_travel_document_subtype_options():
+    subtypes = ("hotel", "flight", "train", "ship", "bus", "others", "unknown")
+    for subtype in subtypes:
+        result = TravelDocumentResult(document_subtype=subtype)
+        assert result.document_subtype == subtype
+
+
 def test_travel_document_invoice_defaults():
     result = TravelDocumentResult(doc_type="invoice", document_subtype="hotel")
     assert result.doc_type == "invoice"

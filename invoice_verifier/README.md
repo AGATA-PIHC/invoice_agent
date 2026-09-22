@@ -111,8 +111,12 @@ Salin `baca_invoice/.env_example` ke `baca_invoice/.env` dan isi env yang dibutu
 
 | Env | Fungsi | Default |
 | --- | --- | --- |
-| `GOOGLE_API_KEY` | API key Google AI Studio | wajib |
+| `GOOGLE_API_KEY` | API key Google AI Studio (mode default) | wajib jika `OPENAI_BASE_URL` kosong |
 | `GOOGLE_GENAI_USE_VERTEXAI` | `1` untuk Vertex AI, `0` untuk AI Studio | `0` |
+| `GEMINI_MODEL` | Nama model Gemini | `gemini-2.5-flash` |
+| `OPENAI_BASE_URL` | Base URL endpoint OpenAI-compatible; mengaktifkan mode OpenAI-compatible | kosong |
+| `OPENAI_API_KEY` | API key endpoint OpenAI-compatible | wajib jika `OPENAI_BASE_URL` diisi |
+| `OPENAI_MODEL` | Nama model endpoint, misalnya `gpt-4o-mini` | wajib jika `OPENAI_BASE_URL` diisi |
 | `PINTER_API_KEY` | API key endpoint PINTER | kosong |
 | `PINTER_TRX_TTL_DAYS` | TTL `trx_id` | `7` |
 | `SQLITE_DB_PATH` | Lokasi SQLite DB | `data/invoice_verifier.db` |
