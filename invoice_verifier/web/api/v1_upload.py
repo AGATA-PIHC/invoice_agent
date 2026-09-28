@@ -25,13 +25,25 @@ router = APIRouter(prefix="/api/pinter", tags=["pinter"])
 _MAX_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 _background_tasks: set[asyncio.Task] = set()
 
+ALLOWED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg"}
+
+
+def _validate_magic_bytes(ext: str, file_bytes: bytes) -> bool:
+    if ext == ".pdf":
+        return len(file_bytes) >= 5 and file_bytes[:4] == b"%PDF"
+    if ext == ".png":
+        return len(file_bytes) >= 8 and file_bytes[:8] == b"\x89PNG\r\n\x1a\n"
+    if ext in (".jpg", ".jpeg"):
+        return len(file_bytes) >= 3 and file_bytes[:3] == b"\xff\xd8\xff"
+    return False
+
 
 @router.post(
     "/upload",
     response_model=UploadResponse,
-    summary="Upload PDF invoice untuk diekstraksi",
+    summary="Upload dokumen invoice (PDF / gambar) untuk diekstraksi",
     description=(
-        "PISmart mengirim file PDF via multipart/form-data. "
+        "PISmart mengirim file PDF atau gambar (PNG, JPG, JPEG) via multipart/form-data. "
         "Response langsung mengembalikan trx_id — proses ekstraksi berjalan di background. "
         "Gunakan GET /api/pinter/extract?trx_id={trx_id} untuk mengambil hasil."
     ),
@@ -42,11 +54,11 @@ async def upload_document(
     _auth: None = Depends(verify_api_key),
     _ratelimit: None = Depends(enforce_upload_rate_limit),
 ) -> UploadResponse:
-    pdf_bytes = await _read_validated_pdf(file)
+    file_bytes = await _read_validated_file(file)
 
     trx_id = str(uuid.uuid4())
     filename = Path(file.filename or "").name
-    dest_path = _persist_upload(trx_id, filename, pdf_bytes)
+    dest_path = _persist_upload(trx_id, filename, file_bytes)
 
     try:
         await create_job(trx_id, filename)
@@ -104,25 +116,38 @@ async def get_extract(
     return _build_extract_response(trx_id, record)
 
 
-async def _read_validated_pdf(file: UploadFile) -> bytes:
+async def _read_validated_file(file: UploadFile) -> bytes:
     if not file.filename:
         raise V1ApiError(400, "Field 'file' wajib diisi.", "MISSING_FILE")
-    if not file.filename.lower().endswith(".pdf"):
-        raise V1ApiError(400, "File harus berformat PDF.", "INVALID_FILE_TYPE")
 
-    pdf_bytes = await file.read()
-    if len(pdf_bytes) > _MAX_BYTES:
+    ext = Path(file.filename).suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise V1ApiError(
+            400,
+            "File harus berformat PDF atau gambar (PNG, JPG, JPEG).",
+            "INVALID_FILE_TYPE",
+        )
+
+    file_bytes = await file.read()
+    if len(file_bytes) > _MAX_BYTES:
         raise V1ApiError(
             413,
             f"Ukuran file melebihi batas maksimum {MAX_UPLOAD_MB} MB.",
             "FILE_TOO_LARGE",
         )
-    if len(pdf_bytes) < 5 or pdf_bytes[:4] != b"%PDF":
-        raise V1ApiError(400, "File harus berformat PDF.", "INVALID_FILE_TYPE")
-    return pdf_bytes
+    if not _validate_magic_bytes(ext, file_bytes):
+        raise V1ApiError(
+            400,
+            "File harus berformat PDF atau gambar (PNG, JPG, JPEG).",
+            "INVALID_FILE_TYPE",
+        )
+    return file_bytes
 
 
-def _persist_upload(trx_id: str, filename: str, pdf_bytes: bytes) -> Path:
+_read_validated_pdf = _read_validated_file
+
+
+def _persist_upload(trx_id: str, filename: str, file_bytes: bytes) -> Path:
     dest_dir = UPLOAD_DIR / trx_id
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_path = dest_dir / filename
@@ -132,7 +157,7 @@ def _persist_upload(trx_id: str, filename: str, pdf_bytes: bytes) -> Path:
         raise V1ApiError(400, "Nama file tidak valid.", "INVALID_FILE_TYPE")
 
     try:
-        dest_path.write_bytes(pdf_bytes)
+        dest_path.write_bytes(file_bytes)
     except OSError as e:
         shutil.rmtree(dest_dir, ignore_errors=True)
         logger.error("Gagal tulis file untuk trx %s: %s", trx_id, e)

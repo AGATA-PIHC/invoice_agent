@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime
 from typing import Any
 
 import fitz
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_pdf_date(raw: str | None) -> str | None:
@@ -34,7 +37,7 @@ def _compute_modification_info(
 
 
 def read_pdf(file_path: str) -> dict[str, Any]:
-    """Baca seluruh teks dan metadata PDF dalam satu kali open file.
+    """Baca seluruh teks dan metadata dokumen (PDF atau gambar) dalam satu kali open file.
 
     Returns:
         dict dengan key:
@@ -47,8 +50,39 @@ def read_pdf(file_path: str) -> dict[str, Any]:
     try:
         doc = fitz.open(file_path)
         try:
-            raw_meta = doc.metadata
-            pages = [{"page": i + 1, "text": doc[i].get_text()} for i in range(len(doc))]
+            raw_meta = doc.metadata or {}
+            pages: list[dict[str, Any]] = []
+            if doc.is_pdf:
+                for i in range(len(doc)):
+                    page = doc[i]
+                    text = page.get_text()
+                    if not text.strip():
+                        try:
+                            # ponytail: dpi=150 cukup tajam untuk dokumen invoice/receipt standar;
+                            # naikkan ke 300 jika font < 6pt tidak terbaca.
+                            tp = page.get_textpage_ocr(language="eng", dpi=150)
+                            text = page.get_text(textpage=tp)
+                        except Exception as exc:
+                            logger.debug("OCR failed on page %d: %s", i + 1, exc)
+                    pages.append({"page": i + 1, "text": text})
+            else:
+                pdf_bytes = doc.convert_to_pdf()
+                pdf_doc = fitz.open("pdf", pdf_bytes)
+                try:
+                    for i in range(len(pdf_doc)):
+                        page = pdf_doc[i]
+                        text = page.get_text()
+                        if not text.strip():
+                            try:
+                                # ponytail: dpi=150 cukup tajam untuk gambar raster standar;
+                                # naikkan ke 300 jika font sangat kecil.
+                                tp = page.get_textpage_ocr(language="eng", dpi=150)
+                                text = page.get_text(textpage=tp)
+                            except Exception as exc:
+                                logger.debug("OCR failed on image page %d: %s", i + 1, exc)
+                        pages.append({"page": i + 1, "text": text})
+                finally:
+                    pdf_doc.close()
         finally:
             doc.close()
     except Exception as exc:
@@ -78,3 +112,6 @@ def read_pdf(file_path: str) -> dict[str, Any]:
         "pages": pages,
         "metadata": metadata,
     }
+
+
+read_document = read_pdf
