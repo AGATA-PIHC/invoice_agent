@@ -2,6 +2,7 @@ from google.adk.agents import LlmAgent, SequentialAgent
 
 from ..models.travel_document import TravelDocumentResult
 from ..tools.combined import analyze_document
+from ..utils.schema_inline import inline_json_schema_refs
 from .postprocess import capture_tool_authenticity, postprocess_llm_response
 from .prompts import EXTRACTOR_PROMPT, FORMATTER_PROMPT
 from web.config import (
@@ -9,6 +10,17 @@ from web.config import (
     OPENAI_API_KEY,
     OPENAI_BASE_URL,
     OPENAI_MODEL,
+)
+
+# Providers OpenAI-compatible seperti Databricks Foundation Model API menolak
+# JSON schema yang memakai $ref/$defs untuk model nested (error: "Invalid JSON
+# schema - /$defs/<Model>"). Saat OPENAI_BASE_URL dipakai, ratakan skema jadi
+# literal supaya tetap valid. Gemini native tidak punya batasan ini, sehingga
+# tetap memakai kelas pydantic langsung.
+_FORMATTER_OUTPUT_SCHEMA = (
+    inline_json_schema_refs(TravelDocumentResult)
+    if OPENAI_BASE_URL
+    else TravelDocumentResult
 )
 
 
@@ -58,7 +70,7 @@ formatter_agent = LlmAgent(
         "document_data hasil extractor."
     ),
     instruction=FORMATTER_PROMPT,
-    output_schema=TravelDocumentResult,
+    output_schema=_FORMATTER_OUTPUT_SCHEMA,
     after_model_callback=postprocess_llm_response,
 )
 
