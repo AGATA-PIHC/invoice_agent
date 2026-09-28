@@ -5,9 +5,25 @@ const POLL_INTERVAL_MS = 1500;
 const MAX_POLL_ATTEMPTS = 200; // ~5 menit
 
 // ─── API key (opsional) ───────────────────────────────────────────────────────
-// Admin dapat set via DevTools: localStorage.setItem('pinterApiKey', '<key>')
+// Diisi lewat input di header, tersimpan di localStorage browser (dikirim via header X-API-Key saat request).
+const API_KEY_STORAGE = 'pinterApiKey';
+
+function _getApiKey() {
+  const input = document.getElementById('api-key-input');
+  const val = (input ? input.value : '').trim();
+  if (val) {
+    try { localStorage.setItem(API_KEY_STORAGE, val); } catch (_) {}
+    return val;
+  }
+  try {
+    return (localStorage.getItem(API_KEY_STORAGE) || '').trim();
+  } catch (_) {
+    return '';
+  }
+}
+
 function _authHeaders() {
-  const key = localStorage.getItem('pinterApiKey');
+  const key = _getApiKey();
   return key ? { 'X-API-Key': key } : {};
 }
 
@@ -35,6 +51,57 @@ const jobIdLabel     = $('job-id-label');
 const activityLog    = $('activity-log');
 const logBadge       = $('log-badge');
 const resultPanel    = $('result-panel');
+const apiKeyField    = $('api-key-field');
+const apiKeyInput    = $('api-key-input');
+const btnToggleKey   = $('btn-toggle-key');
+
+// ─── API key input (header) ──────────────────────────────────────────────────
+function updateApiKeyUI() {
+  const val = apiKeyInput ? apiKeyInput.value.trim() : '';
+  if (apiKeyField) {
+    apiKeyField.classList.toggle('has-key', Boolean(val));
+    apiKeyField.classList.remove('api-key-error');
+  }
+}
+
+if (apiKeyInput) {
+  try {
+    apiKeyInput.value = localStorage.getItem(API_KEY_STORAGE) || '';
+  } catch (_) {}
+  updateApiKeyUI();
+
+  const syncKey = () => {
+    const value = apiKeyInput.value.trim();
+    try {
+      if (value) {
+        localStorage.setItem(API_KEY_STORAGE, value);
+      } else {
+        localStorage.removeItem(API_KEY_STORAGE);
+      }
+    } catch (_) {}
+    updateApiKeyUI();
+  };
+
+  apiKeyInput.addEventListener('input', syncKey);
+  apiKeyInput.addEventListener('change', syncKey);
+  apiKeyInput.addEventListener('paste', () => setTimeout(syncKey, 10));
+}
+
+if (btnToggleKey && apiKeyInput) {
+  btnToggleKey.addEventListener('click', () => {
+    const isPassword = apiKeyInput.type === 'password';
+    apiKeyInput.type = isPassword ? 'text' : 'password';
+    btnToggleKey.innerHTML = isPassword
+      ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+          <line x1="1" y1="1" x2="23" y2="23"/>
+        </svg>`
+      : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+          <circle cx="12" cy="12" r="3"/>
+        </svg>`;
+  });
+}
 
 // ─── File selection ───────────────────────────────────────────────────────────
 dropZone.addEventListener('click', () => fileInput.click());
@@ -51,9 +118,12 @@ fileInput.addEventListener('change', () => {
 });
 btnClear.addEventListener('click', clearFile);
 
+const ALLOWED_EXTS = ['.pdf', '.png', '.jpg', '.jpeg'];
+
 function setFile(f) {
-  if (!f.name.toLowerCase().endsWith('.pdf')) {
-    alert('Hanya file PDF yang diterima.');
+  const ext = '.' + (f.name.split('.').pop() || '').toLowerCase();
+  if (!ALLOWED_EXTS.includes(ext)) {
+    alert('Hanya file PDF atau gambar (PNG, JPG) yang diterima.');
     return;
   }
   state.file = f;
@@ -94,6 +164,14 @@ async function startVerification() {
     if (!res.ok) {
       const msg = body.message || 'Upload gagal.';
       const code = body.error_code || 'UNKNOWN';
+      if (res.status === 401 || code === 'UNAUTHORIZED') {
+        if (apiKeyField) {
+          apiKeyField.classList.remove('api-key-error');
+          void apiKeyField.offsetWidth;
+          apiKeyField.classList.add('api-key-error');
+        }
+        if (apiKeyInput) apiKeyInput.focus();
+      }
       showError(`${msg} (${code})`);
       btnSubmit.disabled = false;
       return;
@@ -128,6 +206,14 @@ async function pollResult() {
     if (!res.ok) {
       const msg = body.message || 'Gagal mengambil hasil.';
       const code = body.error_code || 'UNKNOWN';
+      if (res.status === 401 || code === 'UNAUTHORIZED') {
+        if (apiKeyField) {
+          apiKeyField.classList.remove('api-key-error');
+          void apiKeyField.offsetWidth;
+          apiKeyField.classList.add('api-key-error');
+        }
+        if (apiKeyInput) apiKeyInput.focus();
+      }
       showError(`${msg} (${code})`);
       btnSubmit.disabled = false;
       return;

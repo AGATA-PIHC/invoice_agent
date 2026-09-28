@@ -77,6 +77,7 @@ class AgentRunnerService:
             app_name=APP_NAME,
             user_id=user_id,
             session_id=session_id,
+            state={"file_path": job.file_path},
         )
         message = genai_types.Content(
             role="user",
