@@ -64,6 +64,39 @@ async def test_upload_reject_fake_pdf_magic_bytes(client):
     assert resp.json()["error_code"] == "INVALID_FILE_TYPE"
 
 
+async def test_upload_png_success(client):
+    png_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+    resp = await client.post(
+        "/api/pinter/upload",
+        files={"file": ("invoice.png", png_bytes, "image/png")},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "trx_id" in data
+    assert data["status"] == "progress"
+
+
+async def test_upload_jpg_success(client):
+    jpg_bytes = b"\xff\xd8\xff\xe0" + b"\x00" * 32
+    resp = await client.post(
+        "/api/pinter/upload",
+        files={"file": ("receipt.jpg", jpg_bytes, "image/jpeg")},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "trx_id" in data
+    assert data["status"] == "progress"
+
+
+async def test_upload_reject_fake_image_magic_bytes(client):
+    resp = await client.post(
+        "/api/pinter/upload",
+        files={"file": ("fake.png", b"not a real png", "image/png")},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error_code"] == "INVALID_FILE_TYPE"
+
+
 async def test_upload_reject_oversized_file(client):
     big = b"%PDF" + b"x" * (MAX_UPLOAD_MB * 1024 * 1024 + 1)
     resp = await client.post(

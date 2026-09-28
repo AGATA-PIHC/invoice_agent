@@ -118,9 +118,12 @@ fileInput.addEventListener('change', () => {
 });
 btnClear.addEventListener('click', clearFile);
 
+const ALLOWED_EXTS = ['.pdf', '.png', '.jpg', '.jpeg'];
+
 function setFile(f) {
-  if (!f.name.toLowerCase().endsWith('.pdf')) {
-    alert('Hanya file PDF yang diterima.');
+  const ext = '.' + (f.name.split('.').pop() || '').toLowerCase();
+  if (!ALLOWED_EXTS.includes(ext)) {
+    alert('Hanya file PDF atau gambar (PNG, JPG) yang diterima.');
     return;
   }
   state.file = f;

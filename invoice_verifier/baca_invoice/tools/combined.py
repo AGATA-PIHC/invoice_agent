@@ -7,22 +7,22 @@ from .pdf import read_pdf
 
 
 def analyze_document(file_path: str) -> dict[str, Any]:
-    """Ekstrak teks DAN analisis keaslian dokumen PDF dalam satu panggilan.
+    """Ekstrak teks DAN analisis keaslian dokumen (PDF atau gambar) dalam satu panggilan.
 
     File hanya dibaca sekali. Tool ini dipakai langsung oleh `extractor_agent`.
 
     Args:
-        file_path: Path absolut ke file PDF lokal yang akan dianalisis.
+        file_path: Path absolut ke file lokal (PDF/gambar) yang akan dianalisis.
 
     Returns:
         dict dengan key: success (bool), full_text (str), total_pages (int),
         authenticity (dict berisi verdict, is_suspicious, confidence_score,
-        dll), error (str, opsional). Saat gagal baca PDF, `full_text=""` dan
+        dll), error (str, opsional). Saat gagal baca dokumen, `full_text=""` dan
         `authenticity` tetap diisi nilai default.
     """
     content = read_pdf(file_path)
     if not content.get("success"):
-        error = content.get("error", "Gagal membaca file PDF")
+        error = content.get("error", "Gagal membaca dokumen")
         return {
             "success": False,
             "error": error,
