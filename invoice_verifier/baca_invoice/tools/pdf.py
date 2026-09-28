@@ -58,7 +58,9 @@ def read_pdf(file_path: str) -> dict[str, Any]:
                     text = page.get_text()
                     if not text.strip():
                         try:
-                            tp = page.get_textpage_ocr(language="eng")
+                            # ponytail: dpi=150 cukup tajam untuk dokumen invoice/receipt standar;
+                            # naikkan ke 300 jika font < 6pt tidak terbaca.
+                            tp = page.get_textpage_ocr(language="eng", dpi=150)
                             text = page.get_text(textpage=tp)
                         except Exception as exc:
                             logger.debug("OCR failed on page %d: %s", i + 1, exc)
@@ -72,7 +74,9 @@ def read_pdf(file_path: str) -> dict[str, Any]:
                         text = page.get_text()
                         if not text.strip():
                             try:
-                                tp = page.get_textpage_ocr(language="eng")
+                                # ponytail: dpi=150 cukup tajam untuk gambar raster standar;
+                                # naikkan ke 300 jika font sangat kecil.
+                                tp = page.get_textpage_ocr(language="eng", dpi=150)
                                 text = page.get_text(textpage=tp)
                             except Exception as exc:
                                 logger.debug("OCR failed on image page %d: %s", i + 1, exc)
