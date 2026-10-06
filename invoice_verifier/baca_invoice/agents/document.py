@@ -56,6 +56,7 @@ def _agent_model():
         model=model_name,
         api_base=OPENAI_BASE_URL,
         api_key=OPENAI_API_KEY,
+        extra_headers={"API-Version": "1"},
     )
 
 
