@@ -36,6 +36,7 @@ APP_NAME: str = "invoice_verifier"
 MAX_UPLOAD_MB: int = int(os.getenv("MAX_UPLOAD_MB", "20"))
 MAX_CONCURRENT_JOBS: int = int(os.getenv("MAX_CONCURRENT_JOBS", "10"))
 JOB_TTL_SECONDS: int = int(os.getenv("JOB_TTL_SECONDS", "3600"))
+LLM_TIMEOUT_SECONDS: float = float(os.getenv("LLM_TIMEOUT_SECONDS", "300"))
 JOB_SECRET_KEY: str = os.getenv("JOB_SECRET_KEY") or secrets.token_hex(32)
 
 SQLITE_DB_PATH: str = str(
