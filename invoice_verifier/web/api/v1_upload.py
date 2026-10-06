@@ -15,6 +15,7 @@ from web.db.sqlite import create_job, get_job, update_job
 from web.dependencies import get_runner_service
 from web.models.v1_upload import ExtractResponse, UploadResponse, V1ApiError
 from web.security import verify_api_key
+from web.services.agent_runner import _classify_error
 from web.services.jobs import JobStatus
 from web.services.rate_limit import enforce_upload_rate_limit
 
@@ -180,11 +181,23 @@ async def _run_and_persist(trx_id: str, runner_service) -> None:
         if job and job.status == JobStatus.DONE:
             await update_job(trx_id, status="success", result_json=job.result)
         else:
-            error_msg = (job.error if job else None) or "Verifikasi gagal."
-            await update_job(trx_id, status="fail", error_message=error_msg)
+            await update_job(
+                trx_id,
+                status="fail",
+                error_message=(job.error if job else None) or "Verifikasi gagal.",
+                error_code=(job.error_code if job else None) or "INTERNAL_ERROR",
+                retryable=job.retryable if job else False,
+            )
     except Exception as exc:
         logger.exception("run_and_persist gagal untuk trx %s", trx_id)
-        await update_job(trx_id, status="fail", error_message=str(exc))
+        error_code, error_message, retryable = _classify_error(exc)
+        await update_job(
+            trx_id,
+            status="fail",
+            error_message=error_message,
+            error_code=error_code,
+            retryable=retryable,
+        )
 
 
 def _build_extract_response(trx_id: str, record: dict) -> ExtractResponse:
@@ -204,6 +217,12 @@ def _build_extract_response(trx_id: str, record: dict) -> ExtractResponse:
             status="fail",
             message=record.get("error_message") or "Ekstraksi gagal.",
             data=None,
+            error_code=record.get("error_code") or "INTERNAL_ERROR",
+            retryable=(
+                record["retryable"]
+                if record.get("retryable") is not None
+                else False
+            ),
         )
 
     result_json = record.get("result_json")
@@ -213,6 +232,8 @@ def _build_extract_response(trx_id: str, record: dict) -> ExtractResponse:
             status="fail",
             message="Ekstraksi selesai tanpa hasil valid. Silakan upload ulang dokumen.",
             data=None,
+            error_code="INVALID_LLM_OUTPUT",
+            retryable=True,
         )
 
     return ExtractResponse(

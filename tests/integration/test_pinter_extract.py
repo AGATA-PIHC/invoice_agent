@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 
-async def _insert_job(trx_id: str, status: str, result=None, error=None, created_at=None):
+async def _insert_job(trx_id: str, status: str, result=None, error=None, error_code=None, created_at=None):
     """Helper: write a record directly to SQLite for extract tests."""
     import aiosqlite
     from web.db.sqlite import _DB_PATH
@@ -14,9 +14,9 @@ async def _insert_job(trx_id: str, status: str, result=None, error=None, created
     async with aiosqlite.connect(_DB_PATH) as db:
         await db.execute(
             "INSERT OR REPLACE INTO upload_jobs"
-            " (trx_id, status, filename, created_at, updated_at, result_json, error_message)"
-            " VALUES (?, ?, 'test.pdf', ?, ?, ?, ?)",
-            (trx_id, status, now, now, result_str, error),
+            " (trx_id, status, filename, created_at, updated_at, result_json, error_message, error_code)"
+            " VALUES (?, ?, 'test.pdf', ?, ?, ?, ?, ?)",
+            (trx_id, status, now, now, result_str, error, error_code),
         )
         await db.commit()
 
@@ -50,13 +50,20 @@ async def test_extract_success_returns_data(client):
 
 async def test_extract_fail_returns_error_message(client):
     trx_id = str(uuid.uuid4())
-    await _insert_job(trx_id, "fail", error="Gagal membaca PDF.")
+    await _insert_job(
+        trx_id,
+        "fail",
+        error="Kuota credit LLM habis.",
+        error_code="LLM_QUOTA_EXCEEDED",
+    )
 
     resp = await client.get(f"/api/pinter/extract?trx_id={trx_id}")
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "fail"
-    assert "Gagal membaca PDF." in data["message"]
+    assert data["error_code"] == "LLM_QUOTA_EXCEEDED"
+    assert data["retryable"] is False
+    assert "Kuota credit LLM habis." in data["message"]
     assert data["data"] is None
 
 

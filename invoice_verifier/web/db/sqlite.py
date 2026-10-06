@@ -21,7 +21,9 @@ CREATE TABLE IF NOT EXISTS upload_jobs (
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL,
     result_json   TEXT,
-    error_message TEXT
+    error_message TEXT,
+    error_code    TEXT,
+    retryable     INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_upload_jobs_status ON upload_jobs(status);
 """
@@ -31,9 +33,19 @@ async def init_db() -> None:
     _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(_DB_PATH) as db:
         await db.executescript(_DDL)
+        await _ensure_columns(db)
         await db.commit()
     logger.info("SQLite DB initialized at %s", _DB_PATH)
     await _recover_stale_jobs()
+
+
+async def _ensure_columns(db) -> None:
+    cursor = await db.execute("PRAGMA table_info(upload_jobs)")
+    rows = await cursor.fetchall()
+    columns = {row[1] for row in rows}
+    for name, definition in (("error_code", "TEXT"), ("retryable", "INTEGER")):
+        if name not in columns:
+            await db.execute(f"ALTER TABLE upload_jobs ADD COLUMN {name} {definition}")
 
 
 async def _recover_stale_jobs() -> None:
@@ -41,9 +53,9 @@ async def _recover_stale_jobs() -> None:
     now = datetime.now(UTC).isoformat()
     async with aiosqlite.connect(_DB_PATH) as db:
         result = await db.execute(
-            "UPDATE upload_jobs SET status='fail', updated_at=?, error_message=?"
-            " WHERE status='progress'",
-            (now, "Proses terputus akibat server restart."),
+            "UPDATE upload_jobs SET status='fail', updated_at=?, error_message=?,"
+            " error_code=?, retryable=? WHERE status='progress'",
+            (now, "Proses terputus akibat server restart.", "JOB_INTERRUPTED", 1),
         )
         await db.commit()
         if result.rowcount:
@@ -65,8 +77,8 @@ async def get_job(trx_id: str) -> dict | None:
     async with aiosqlite.connect(_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT trx_id, status, filename, created_at, updated_at, result_json, error_message"
-            " FROM upload_jobs WHERE trx_id = ?",
+            "SELECT trx_id, status, filename, created_at, updated_at, result_json,"
+            " error_message, error_code, retryable FROM upload_jobs WHERE trx_id = ?",
             (trx_id,),
         ) as cursor:
             row = await cursor.fetchone()
@@ -78,6 +90,8 @@ async def get_job(trx_id: str) -> dict | None:
             record["result_json"] = json.loads(record["result_json"])
         except (json.JSONDecodeError, TypeError):
             record["result_json"] = None
+    if record.get("retryable") is not None:
+        record["retryable"] = bool(record["retryable"])
     return record
 
 
@@ -86,13 +100,15 @@ async def update_job(
     status: str,
     result_json: dict | None = None,
     error_message: str | None = None,
+    error_code: str | None = None,
+    retryable: bool | None = None,
 ) -> None:
     now = datetime.now(UTC).isoformat()
     result_str = json.dumps(result_json) if result_json is not None else None
     async with aiosqlite.connect(_DB_PATH) as db:
         await db.execute(
-            "UPDATE upload_jobs SET status=?, updated_at=?, result_json=?, error_message=?"
-            " WHERE trx_id=?",
-            (status, now, result_str, error_message, trx_id),
+            "UPDATE upload_jobs SET status=?, updated_at=?, result_json=?, error_message=?,"
+            " error_code=?, retryable=? WHERE trx_id=?",
+            (status, now, result_str, error_message, error_code, retryable, trx_id),
         )
         await db.commit()

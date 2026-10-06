@@ -27,6 +27,8 @@ class Job:
     status: JobStatus = JobStatus.PENDING
     result: dict | None = None
     error: str | None = None
+    error_code: str | None = None
+    retryable: bool | None = None
     created_at: float = field(default_factory=time.monotonic)
 
 

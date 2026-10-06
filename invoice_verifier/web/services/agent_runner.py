@@ -10,7 +10,12 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types as genai_types
 
 from baca_invoice.agents.document import document_agent
-from web.config import APP_NAME, IS_PRODUCTION, JOB_TTL_SECONDS, MAX_CONCURRENT_JOBS
+from web.config import (
+    APP_NAME,
+    JOB_TTL_SECONDS,
+    LLM_TIMEOUT_SECONDS,
+    MAX_CONCURRENT_JOBS,
+)
 from web.services.agent_io import run_agent_for_json
 from web.services.jobs import Job, JobStatus, cleanup_job_file
 from web.services.result_validator import validate_agent_result
@@ -61,12 +66,14 @@ class AgentRunnerService:
         async with self._semaphore:
             job.status = JobStatus.RUNNING
             try:
-                job.result = await self._extract_document(job)
+                job.result = await asyncio.wait_for(
+                    self._extract_document(job), timeout=LLM_TIMEOUT_SECONDS
+                )
                 job.status = JobStatus.DONE
             except Exception as exc:
                 logger.exception("Job %s failed", job_id)
                 job.status = JobStatus.ERROR
-                job.error = _user_facing_error(exc)
+                job.error_code, job.error, job.retryable = _classify_error(exc)
             finally:
                 cleanup_job_file(job)
 
@@ -135,8 +142,44 @@ def _clear_broken_local_proxy() -> None:
             os.environ.pop(key, None)
 
 
-def _user_facing_error(exc: Exception) -> str:
-    message = "Terjadi kesalahan saat memproses dokumen."
-    if not IS_PRODUCTION:
-        return f"{message} Detail: {exc}"
-    return message
+def _classify_error(exc: Exception) -> tuple[str, str, bool]:
+    """Map provider and pipeline failures to a stable client-facing contract."""
+    text = str(exc).lower()
+    status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+    status_text = str(status).lower()
+
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)) or "timeout" in text:
+        return "LLM_TIMEOUT", "Proses AI melebihi batas waktu. Silakan coba lagi.", True
+    if any(marker in text for marker in (
+        "insufficient_quota", "credit limit", "credit balance", "quota exceeded",
+        "perday", "per_day", "quota per day", "daily quota", "payment required", "billing limit",
+    )) or status_text == "402":
+        return "LLM_QUOTA_EXCEEDED", "Kuota credit layanan AI habis. Hubungi administrator.", False
+    if status_text == "429" or any(marker in text for marker in (
+        "rate limit", "ratelimit", "resource_exhausted", "too many requests",
+    )):
+        return "LLM_RATE_LIMITED", "Layanan AI sedang mencapai batas request. Silakan coba lagi.", True
+    if status_text in {"500", "502", "503", "504"} or any(marker in text for marker in (
+        "service unavailable", "temporarily unavailable", "overloaded", "internal server error",
+    )):
+        return "LLM_UNAVAILABLE", "Layanan AI sedang tidak tersedia. Silakan coba lagi.", True
+    if status_text in {"401", "403", "404"} or any(marker in text for marker in (
+        "api key", "unauthorized", "permission denied", "forbidden", "model not found",
+        "failed_precondition",
+    )):
+        return "LLM_CONFIG_ERROR", "Konfigurasi layanan AI bermasalah. Hubungi administrator.", False
+    if any(marker in text for marker in (
+        "context length", "context window", "maximum context", "token limit",
+    )):
+        return "DOCUMENT_TOO_LARGE", "Dokumen terlalu besar untuk diproses.", False
+    if any(marker in text for marker in ("safety", "content policy", "content blocked")):
+        return "CONTENT_BLOCKED", "Konten dokumen tidak dapat diproses oleh layanan AI.", False
+    if any(marker in text for marker in (
+        "json", "schema", "validationerror", "did not return", "invalid output",
+    )) and isinstance(exc, (ValueError, TypeError)):
+        return "INVALID_LLM_OUTPUT", "Layanan AI mengembalikan hasil tidak valid. Silakan coba lagi.", True
+    if any(marker in text for marker in (
+        "pdf", "document", "file not found", "encrypted", "corrupt", "ocr",
+    )):
+        return "UNREADABLE_DOCUMENT", "Dokumen tidak dapat dibaca. Upload dokumen yang valid.", False
+    return "INTERNAL_ERROR", "Terjadi kesalahan saat memproses dokumen.", False
