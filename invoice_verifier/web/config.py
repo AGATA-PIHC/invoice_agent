@@ -63,3 +63,24 @@ GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 OPENAI_BASE_URL: str | None = _normalize_base_url(os.getenv("OPENAI_BASE_URL"))
 OPENAI_API_KEY: str | None = os.getenv("OPENAI_API_KEY") or None
 OPENAI_MODEL: str | None = os.getenv("OPENAI_MODEL") or None
+
+# Pinter Agent remote settings (dev.pupuk.ai)
+PINTER_AGENT_BASE_URL: str = (
+    _normalize_base_url(os.getenv("PINTER_AGENT_BASE_URL"))
+    or OPENAI_BASE_URL
+    or "https://api-dev.pupuk.ai/api/agents/openai/v1"
+)
+PINTER_PLATFORM_API_KEY: str | None = (
+    os.getenv("PINTER_PLATFORM_API_KEY")
+    or OPENAI_API_KEY
+    or None
+)
+PINTER_AGENT_ID: str | None = (
+    os.getenv("PINTER_AGENT_ID")
+    or OPENAI_MODEL
+    or None
+)
+USE_PINTER_AGENT: bool = os.getenv(
+    "USE_PINTER_AGENT",
+    "1" if (os.getenv("PINTER_AGENT_ID") or os.getenv("PINTER_PLATFORM_API_KEY")) else "0",
+).lower() not in ("0", "false", "no")

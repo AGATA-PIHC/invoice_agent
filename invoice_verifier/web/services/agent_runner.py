@@ -5,19 +5,21 @@ import logging
 import os
 import time
 
+from baca_invoice.agents.document import document_agent
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types as genai_types
 
-from baca_invoice.agents.document import document_agent
 from web.config import (
     APP_NAME,
     JOB_TTL_SECONDS,
     LLM_TIMEOUT_SECONDS,
     MAX_CONCURRENT_JOBS,
+    USE_PINTER_AGENT,
 )
 from web.services.agent_io import run_agent_for_json
 from web.services.jobs import Job, JobStatus, cleanup_job_file
+from web.services.pinter_client import PinterAgentClient
 from web.services.result_validator import validate_agent_result
 
 logger = logging.getLogger(__name__)
@@ -40,6 +42,7 @@ class AgentRunnerService:
             agent=document_agent,
             session_service=self._session_service,
         )
+        self._pinter_client = PinterAgentClient()
         self._jobs: dict[str, Job] = {}
         self._lock = asyncio.Lock()
         self._semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
@@ -78,6 +81,10 @@ class AgentRunnerService:
                 cleanup_job_file(job)
 
     async def _extract_document(self, job: Job) -> dict:
+        if USE_PINTER_AGENT:
+            raw_result = await self._pinter_client.extract_document(job.file_path)
+            return validate_agent_result(raw_result)
+
         user_id = f"user_{job.job_id}"
         session_id = f"session_{job.job_id}"
         await self._session_service.create_session(
@@ -158,7 +165,11 @@ def _classify_error(exc: Exception) -> tuple[str, str, bool]:
     if status_text == "429" or any(marker in text for marker in (
         "rate limit", "ratelimit", "resource_exhausted", "too many requests",
     )):
-        return "LLM_RATE_LIMITED", "Layanan AI sedang mencapai batas request. Silakan coba lagi.", True
+        return (
+            "LLM_RATE_LIMITED",
+            "Layanan AI sedang mencapai batas request. Silakan coba lagi.",
+            True,
+        )
     if status_text in {"500", "502", "503", "504"} or any(marker in text for marker in (
         "service unavailable", "temporarily unavailable", "overloaded", "internal server error",
     )):
@@ -167,7 +178,11 @@ def _classify_error(exc: Exception) -> tuple[str, str, bool]:
         "api key", "unauthorized", "permission denied", "forbidden", "model not found",
         "failed_precondition",
     )):
-        return "LLM_CONFIG_ERROR", "Konfigurasi layanan AI bermasalah. Hubungi administrator.", False
+        return (
+            "LLM_CONFIG_ERROR",
+            "Konfigurasi layanan AI bermasalah. Hubungi administrator.",
+            False,
+        )
     if any(marker in text for marker in (
         "context length", "context window", "maximum context", "token limit",
     )):
@@ -177,9 +192,17 @@ def _classify_error(exc: Exception) -> tuple[str, str, bool]:
     if any(marker in text for marker in (
         "json", "schema", "validationerror", "did not return", "invalid output",
     )) and isinstance(exc, (ValueError, TypeError)):
-        return "INVALID_LLM_OUTPUT", "Layanan AI mengembalikan hasil tidak valid. Silakan coba lagi.", True
+        return (
+            "INVALID_LLM_OUTPUT",
+            "Layanan AI mengembalikan hasil tidak valid. Silakan coba lagi.",
+            True,
+        )
     if any(marker in text for marker in (
         "pdf", "document", "file not found", "encrypted", "corrupt", "ocr",
     )):
-        return "UNREADABLE_DOCUMENT", "Dokumen tidak dapat dibaca. Upload dokumen yang valid.", False
+        return (
+            "UNREADABLE_DOCUMENT",
+            "Dokumen tidak dapat dibaca. Upload dokumen yang valid.",
+            False,
+        )
     return "INTERNAL_ERROR", "Terjadi kesalahan saat memproses dokumen.", False
